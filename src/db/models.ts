@@ -42,3 +42,14 @@ export interface WatchHistory {
   episode_id: string
   watched_at: Date // 精确到日（或可精确到分钟）
 }
+
+// 视频文件
+export interface VideoFile {
+  id: string;              // 文件唯一标识（可使用路径 hash）
+  path: string;            // 相对于授权目录的路径（用于显示和播放）
+  name: string;            // 文件名
+  ext: string;             // 扩展名
+  size: number;            // 文件大小（字节）
+  modified: number;        // 最后修改时间戳
+  parentPath: string;      // 父目录相对路径（便于分组）
+}
