@@ -11,6 +11,7 @@
         <li v-for="(info, index) in parsedFileInfos" :key="index">{{ formatParsedFileInfo(info) }}</li>
       </ul>
     </div>
+    <el-button @click="testMatch" :loading="matching">测试匹配</el-button>
   </div>
 </template>
 
@@ -18,9 +19,9 @@
 import { ref } from 'vue';
 import { requestDirectory, getDirectoryHandle, scanVideos } from '@/services/fileSystem';
 import { db } from '@/db/db';
-import type { VideoFile } from '@/db/models';
-import type { ParsedFileInfo } from '@/utils/fileParser';
-import { formatParsedFileInfo, parseVideoFileName } from '@/utils/fileParser'
+import { type VideoFile } from '@/db/models';
+import { formatParsedFileInfo, parseVideoFileName, type ParsedFileInfo } from '@/utils/fileParser'
+import { scanAndMatch } from '@/services/matcher';
 
 const scanning = ref(false);
 const files = ref<VideoFile[]>([]);
@@ -48,6 +49,22 @@ const authorizeAndScan = async () => {
     }
   } finally {
     scanning.value = false;
+  }
+};
+
+const matching = ref(false);
+
+const testMatch = async () => {
+  matching.value = true;
+  try {
+    const candidates = await scanAndMatch();
+    console.log('匹配结果:', candidates);
+    // 可以简单显示在页面上，比如用 JSON 预览
+  } catch (err) {
+    console.error(err);
+    alert(err instanceof Error ? err.message : String(err));
+  } finally {
+    matching.value = false;
   }
 };
 </script>
