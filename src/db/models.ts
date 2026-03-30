@@ -28,6 +28,7 @@ export interface Episode {
   id: string // UUID
   anime_id: string // 关联的番剧 ID
   episode_number: number // 集数
+  filePath?: string // 视频文件相对路径，用于播放
   title?: string // 单集标题（可选）
   watched: boolean // 是否已看
   watched_at?: Date // 观看日期（用于热力图）

@@ -1,5 +1,5 @@
 import { db } from '@/db/db';
-import { parseVideoFileName, type ParsedFileInfo } from '@/utils/fileParser';
+import { parseVideoFileName, type ParsedFileInfo } from '@/utils/fileNameParser';
 import { searchAnime, type BangumiSearchResult } from './bangumi';
 
 export interface MatchCandidate {

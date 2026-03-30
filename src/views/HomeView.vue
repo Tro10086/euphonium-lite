@@ -20,8 +20,8 @@ import { ref } from 'vue';
 import { requestDirectory, getDirectoryHandle, scanVideos } from '@/services/fileSystem';
 import { db } from '@/db/db';
 import { type VideoFile } from '@/db/models';
-import { formatParsedFileInfo, parseVideoFileName, type ParsedFileInfo } from '@/utils/fileParser'
-import { scanAndMatch } from '@/services/matcher';
+import { formatParsedFileInfo, parseVideoFileName, type ParsedFileInfo } from '@/utils/fileNameParser'
+import { scanAndMatch } from '@/services/fileMatching';
 
 const scanning = ref(false);
 const files = ref<VideoFile[]>([]);
