@@ -1,89 +1,76 @@
 import { db } from '@/db/db';
-import type { Anime, Episode, MatchCandidate } from '@/db/models';
-import type { MatchCandidate } from './fileMatching';
-import { fetchAnimeDetail } from './bangumi';
+import type { BAnime, BEpisode } from '@/models/Bangumi';
+import type { MatchCandidate } from '@/models/MatchCandidate';
+import { getEpisodes } from './bangumi';
 
 const generateId = (): string => crypto.randomUUID()
 
-/**
- * 保存匹配结果
- * @param candidates 用户确认后的匹配项列表
- */
 export async function saveMatchedVideos(candidates: MatchCandidate[]) {
-
-
-
-  // 1. 按番剧分组（根据 selectedSuggestionId）
-  const groups = new Map<number, MatchCandidate[]>();
+  const animeUploaded = new Map<number, BEpisode[]>();
   for (const cand of candidates) {
-    if (cand.selectedSuggestionId) {
-      const id = cand.selectedSuggestionId;
-      if (!groups.has(id)) groups.set(id, []);
-      groups.get(id)!.push(cand);
-    }
-  }
-
-  // 2. 对每个番剧，先获取/创建 anime 记录，再批量创建 episodes
-  for (const [bangumiId, fileList] of groups.entries()) {
-    // 检查是否已存在相同 bangumi_id 的番剧
-    let anime = await db.anime.where('bangumi_id').equals(bangumiId).first();
-    if (!anime) {
-      // 从 Bangumi 获取详情
-      const detail = await fetchAnimeDetail(bangumiId);
-      // 映射到 Anime 类型
-      anime = {
-        id: generateId(),
-        title: detail.name_cn || detail.name,
-        title_original: detail.name,
-        bangumi_id: detail.id,
-        cover: detail.images?.large,
-        summary: detail.summary,
-        rating: 0,
-        status: 'watching',
-        type: mapBangumiType(detail.type),
-        tags: [],
-        total_episodes: detail.eps,
-        aired_season: detail.date?.slice(0,7),
-        created_at: new Date(),
-        updated_at: new Date(),
-        overall_notes: '',
-        isFromScan: true,
-      };
-      await db.anime.add(anime);
-    }
-
-    // 对该番剧下的每个文件，创建或更新 episode 记录
-    for (const cand of fileList) {
-      const episodeNumber = cand.parsed?.episode;
-      if (!episodeNumber) continue; // 无集数则跳过
-      // 查找是否已存在该番剧相同集数的剧集
-      let episode = await db.episodes.where({ anime_id: anime.id, episode_number: episodeNumber }).first();
-      if (!episode) {
-        episode = {
+    if (!cand.animes[0]) throw new Error("未提供匹配的动画信息");
+    const b_anime: BAnime = cand.animes[0]
+    let animeId = '';
+    if (!animeUploaded.has(b_anime.id)) {
+      let anime = await db.anime.where('bangumi_id').equals(b_anime.id).first();
+      if (!anime) {
+        anime = {
           id: generateId(),
-          anime_id: anime.id,
+          name_cn: b_anime.name_cn,
+          name: b_anime.name,
+          bangumi_id: b_anime.id,
+          cover: b_anime.image,
+          summary: b_anime.summary,
+          bangumi_score: b_anime.rating.score,
+          rating: 0,
+          status: 'planned',
+          tags: b_anime.meta_tags,
+          total_episodes: b_anime.eps,
+          date: b_anime.date,
+          created_at: new Date(),
+          updated_at: new Date(),
+          overall_notes: '',
+        };
+        await db.anime.add(anime);
+      }
+      animeId = anime.id;
+      animeUploaded.set(b_anime.id, await getEpisodes(b_anime.id, b_anime.eps));
+    }
+    const episodes_existed = await db.episodes.where('anime_id').equals(animeId).toArray();
+    const epMap_existed = new Map(episodes_existed.map(ep => [ep.episode_number, ep]));
+    const episodes_anime = animeUploaded.get(b_anime.id);
+    if (!episodes_anime || episodes_anime.length === 0) throw new Error("未查询到匹配的剧集信息");
+    const epMap = new Map(episodes_anime.map(ep => [ep.ep, ep]));
+    for (const [epNumStr, files] of Object.entries(cand.videoFiles)) {
+      const episodeNumber = parseInt(epNumStr, 10);
+      const videoFile = files[0];
+      if (!videoFile) throw new Error("未提供匹配的剧集文件");
+
+      const existing = epMap_existed.get(episodeNumber);
+      if (existing) {
+        await db.episodes.update(existing.id, {
+          file_id: videoFile.id,
+          last_file_path: videoFile.path,
+          last_matched_at: new Date()
+        });
+      } else {
+        const ep = epMap.get(episodeNumber);
+        if (!ep) throw new Error("未查询到匹配的剧集信息");
+        await db.episodes.add({
+          id: generateId(),
+          anime_id: animeId,
+          file_id: videoFile.id,
           episode_number: episodeNumber,
-          title: `第 ${episodeNumber} 话`,
+          name: ep.name,
+          nameCn: ep.nameCn,
+          airdate: ep.airdate,
+          duration_seconds: ep.duration_seconds,
+          desc: ep.desc,
           watched: false,
           rating: 0,
           notes: '',
-          filePath: cand.filePath, // 存储相对路径
-        };
-        await db.episodes.add(episode);
-      } else {
-        // 如果已有记录但未关联文件，可更新文件路径（假设一个剧集只有一个文件）
-        if (!episode.filePath) {
-          await db.episodes.update(episode.id, { filePath: cand.filePath });
-        }
+        });
       }
     }
-  }
-}
-
-function mapBangumiType(type: number): Anime['type'] {
-  switch (type) {
-    case 2: return 'TV';
-    case 3: return 'Movie';
-    default: return 'Other';
   }
 }

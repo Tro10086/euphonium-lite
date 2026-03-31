@@ -1,7 +1,7 @@
-import type { Anime } from "@/db/models";
-import type { Episode } from "./Episode";
+import type { VideoFile } from "@/db/models";
+import type { BAnime } from "./Bangumi";
 
 export interface MatchCandidate {
-    anime: Anime;
-    episodes: Episode[];
+    animes: BAnime[];
+    videoFiles: Record<number, VideoFile[]>;
 }

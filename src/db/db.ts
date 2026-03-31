@@ -10,7 +10,7 @@ export class EuphoniumDB extends Dexie {
   constructor() {
     super('EuphoniumLite')
     this.version(1).stores({
-      anime: 'id, title, status, type, rating, updated_at',
+      anime: 'id, bangumi_id, title, status, type, rating, updated_at',
       episodes: 'id, anime_id, episode_number, watched, watched_at',
       watchHistory: 'id, anime_id, episode_id, watched_at',
       files: 'id, path, name, ext, parentPath',
