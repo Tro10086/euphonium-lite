@@ -1,13 +1,4 @@
-export interface ParsedFileInfo {
-  title: string;      // 提取的番剧名（中文或日文）
-  season: number;     // 季数，默认1
-  episode: number;    // 集数，默认0（表示无法解析）
-  confidence: number; // 置信度，0-1
-}
-
-export function formatParsedFileInfo(info: ParsedFileInfo): string {
-  return `标题: ${info.title}, 季: ${info.season}, 集: ${info.episode}`;
-}
+import  { formatParsedFileInfo, type ParsedFileInfo } from "@/models/File";
 
 // 常见集数模式正则
 const episodePatterns = [
@@ -67,5 +58,5 @@ export function parseVideoFileName(fileName: string): ParsedFileInfo {
     confidence = Math.max(0.3, confidence);
   }
   
-  return { title, season, episode, confidence };
+  return { title, season, episode };
 }

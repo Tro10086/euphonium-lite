@@ -1,4 +1,4 @@
-export interface BAnime {
+export interface BangumiAnime {
   id: number;
   date: string;
   platform: string;
@@ -17,13 +17,13 @@ export interface BAnime {
   };
 }
 
-export interface BEpisode {
+export interface BangumiEpisode {
   id: number;
   subjectId: number;
   ep: number;
   name: string;
-  nameCn: string;
+  name_cn: string;
   airdate: string;
-  duration_seconds: string;
+  duration_seconds: number;
   desc: string;
 }

@@ -1,4 +1,4 @@
-import type { BAnime, BEpisode } from "@/models/Bangumi";
+import type { BangumiAnime, BangumiEpisode } from "@/models/Bangumi";
 
 const BGM_API = 'https://api.bgm.tv/v0';
 
@@ -6,9 +6,9 @@ const filter = {
   type: [2],  // 固定为动画
 };
 
-const searchCache = new Map<string, BAnime[]>();
+const searchCache = new Map<string, BangumiAnime[]>();
 
-export async function getSearchResults(keyword: string): Promise<BAnime[]> {
+export async function getSearchResults(keyword: string): Promise<BangumiAnime[]> {
   if (searchCache.has(keyword)) {
     console.log(`[Cache hit] ${keyword}`);
     return searchCache.get(keyword)!;
@@ -19,7 +19,7 @@ export async function getSearchResults(keyword: string): Promise<BAnime[]> {
   return results;
 }
 
-async function searchSubjects(keyword: string): Promise<BAnime[]> {
+async function searchSubjects(keyword: string): Promise<BangumiAnime[]> {
   const url = `${BGM_API}/search/subjects?limit=10`
   const res = await fetch(url, {
     method: 'POST',
@@ -31,7 +31,7 @@ async function searchSubjects(keyword: string): Promise<BAnime[]> {
   return data.data || [];
 }
 
-export async function getEpisodes(subject_id: number, limit: number): Promise<BEpisode[]> {
+export async function getEpisodes(subject_id: number, limit: number): Promise<BangumiEpisode[]> {
   const url = `${BGM_API}/episodes?subject_id=${subject_id}&limit=${limit}`
   const res = await fetch(url, {
     method: 'GET',

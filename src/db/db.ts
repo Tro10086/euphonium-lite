@@ -1,5 +1,8 @@
 import Dexie from 'dexie'
-import type { Anime, Episode, WatchHistory, VideoFile } from './models'
+import type { Anime, Episode } from '@/models/Anime';
+import type { WatchHistory } from '@/models/History';
+import type { VideoFile } from '@/models/File';
+
 
 export class EuphoniumDB extends Dexie {
   anime!: Dexie.Table<Anime, string>
@@ -10,10 +13,10 @@ export class EuphoniumDB extends Dexie {
   constructor() {
     super('EuphoniumLite')
     this.version(1).stores({
-      anime: 'id, bangumi_id, title, status, type, rating, updated_at',
-      episodes: 'id, anime_id, episode_number, watched, watched_at',
+      anime: 'id, name_cn, bangumi_id, bangumi_score, rating, status, date, updated_at',
+      episodes: 'id, anime_id, ep, watched, watched_at, rating',
       watchHistory: 'id, anime_id, episode_id, watched_at',
-      files: 'id, path, name, ext, parentPath',
+      files: 'id',
       dirHandle: 'id'
     })
   }

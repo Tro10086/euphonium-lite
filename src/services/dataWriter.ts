@@ -1,15 +1,15 @@
 import { db } from '@/db/db';
-import type { BAnime, BEpisode } from '@/models/Bangumi';
+import type { BangumiAnime, BangumiEpisode } from '@/models/Bangumi';
 import type { MatchCandidate } from '@/models/MatchCandidate';
 import { getEpisodes } from './bangumi';
 
 const generateId = (): string => crypto.randomUUID()
 
 export async function saveMatchedVideos(candidates: MatchCandidate[]) {
-  const animeUploaded = new Map<number, BEpisode[]>();
+  const animeUploaded = new Map<number, BangumiEpisode[]>();
   for (const cand of candidates) {
     if (!cand.animes[0]) throw new Error("未提供匹配的动画信息");
-    const b_anime: BAnime = cand.animes[0]
+    const b_anime: BangumiAnime = cand.animes[0]
     let animeId = '';
     if (!animeUploaded.has(b_anime.id)) {
       let anime = await db.anime.where('bangumi_id').equals(b_anime.id).first();
@@ -37,7 +37,7 @@ export async function saveMatchedVideos(candidates: MatchCandidate[]) {
       animeUploaded.set(b_anime.id, await getEpisodes(b_anime.id, b_anime.eps));
     }
     const episodes_existed = await db.episodes.where('anime_id').equals(animeId).toArray();
-    const epMap_existed = new Map(episodes_existed.map(ep => [ep.episode_number, ep]));
+    const epMap_existed = new Map(episodes_existed.map(ep => [ep.ep, ep]));
     const episodes_anime = animeUploaded.get(b_anime.id);
     if (!episodes_anime || episodes_anime.length === 0) throw new Error("未查询到匹配的剧集信息");
     const epMap = new Map(episodes_anime.map(ep => [ep.ep, ep]));
@@ -60,9 +60,9 @@ export async function saveMatchedVideos(candidates: MatchCandidate[]) {
           id: generateId(),
           anime_id: animeId,
           file_id: videoFile.id,
-          episode_number: episodeNumber,
+          ep: episodeNumber,
           name: ep.name,
-          nameCn: ep.nameCn,
+          name_cn: ep.name_cn,
           airdate: ep.airdate,
           duration_seconds: ep.duration_seconds,
           desc: ep.desc,
