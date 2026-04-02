@@ -113,13 +113,17 @@ export async function scanVideos(dirHandle: FileSystemDirectoryHandle) {
 
   const toAdd: VideoFile[] = [];
   const toUpdate: VideoFile[] = [];
-  const seenHashes = new Set<string>();
+  const processedHashes = new Set<string>();
 
   for (const { handle, name, path, parentPath } of files) {
     const file = await handle.getFile();
     const quickHash = await computeQuickHash(file);
 
-    seenHashes.add(quickHash);
+    if (processedHashes.has(quickHash)) {
+      console.warn(`重复文件跳过: ${path} (本次扫描中存在文件的采样哈希相同)`);
+      continue;
+    }
+    processedHashes.add(quickHash);
 
     const existing = existingByHash.get(quickHash);
 
@@ -147,7 +151,7 @@ export async function scanVideos(dirHandle: FileSystemDirectoryHandle) {
     }
   }
 
-  const toDelete = existingFiles.filter(f => !seenHashes.has(f.quickHash)); 
+  const toDelete = existingFiles.filter(f => !processedHashes.has(f.quickHash)); 
 
   await fileAPI.add(toAdd);
   await fileAPI.update(toUpdate);
