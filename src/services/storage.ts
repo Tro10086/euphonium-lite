@@ -72,7 +72,12 @@ export const watchHistoryAPI = {
   },
 }
 
+// 文件增删改查
 export const fileAPI = {
+  async getById(id: string) {
+    return db.files.get(id);
+  },
+
   async getAll() {
     return db.files.toArray();
   },
@@ -85,12 +90,13 @@ export const fileAPI = {
     if (files.length) await db.files.bulkPut(files);
   },
 
+  // 删除文件时不采用级联删除，而是将episode表中的file_id设置为空
   async delete(files: VideoFile[]): Promise<void> {
     if (files.length === 0) return;
     const ids = files.map(f => f.id);
     await db.transaction('rw', [db.files, db.episodes], async () => {
       await db.episodes
-        .where('fileId')
+        .where('file_id')
         .anyOf(ids)
         .modify({ file_id: null });
       
