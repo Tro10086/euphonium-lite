@@ -2,6 +2,7 @@ import Dexie from 'dexie'
 import type { Anime, Episode } from '@/models/Anime';
 import type { WatchHistory } from '@/models/History';
 import type { VideoFile } from '@/models/File';
+import type { MatchRecord } from '@/models/Match';
 
 
 export class EuphoniumDB extends Dexie {
@@ -9,6 +10,7 @@ export class EuphoniumDB extends Dexie {
   episodes!: Dexie.Table<Episode, string>
   watchHistory!: Dexie.Table<WatchHistory, string>
   files!: Dexie.Table<VideoFile, string>; 
+  match!: Dexie.Table<MatchRecord, string>; 
 
   constructor() {
     super('EuphoniumLite')
@@ -17,7 +19,8 @@ export class EuphoniumDB extends Dexie {
       episodes: 'id, anime_id, file_id, ep, watched, watched_at, rating',
       watchHistory: 'id, anime_id, episode_id, watched_at',
       files: 'id',
-      dirHandle: 'id'
+      dirHandle: 'id',
+      match: 'keyword'
     })
   }
 }

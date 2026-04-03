@@ -1,6 +1,6 @@
 import { db } from '@/db/db';
 import type { BangumiAnime, BangumiEpisode } from '@/models/Bangumi';
-import type { MatchCandidate } from '@/models/MatchCandidate';
+import type { MatchCandidate } from '@/models/Match';
 import { getEpisodes } from './bangumi';
 
 const generateId = (): string => crypto.randomUUID()

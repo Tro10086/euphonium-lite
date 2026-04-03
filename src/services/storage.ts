@@ -2,6 +2,7 @@ import { db } from '@/db/db'
 import type { Anime, Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 import type { WatchHistory } from '@/models/History'
+import type { MatchRecord } from '@/models/Match'
 
 export const animeAPI = {
   async add(anime: Omit<Anime, 'id' | 'created_at' | 'updated_at'>) {
@@ -102,5 +103,23 @@ export const fileAPI = {
       
       await db.files.bulkDelete(ids);
     });
+  },
+}
+
+// 匹配记录增删改查
+export const matchAPI = {
+  async getByKeyword(keyword: string) {
+    return db.match.get(keyword);
+  },
+
+  async add(match: Omit<MatchRecord, 'status' | 'createAt' | 'updatedAt'>) {
+    const now = new Date();
+    const newMatchRecord: MatchRecord = { 
+      ...match, 
+      status: 'idle',
+      created_at: now,
+      updated_at: now,
+    }
+    return db.match.add(newMatchRecord)
   },
 }
