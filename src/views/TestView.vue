@@ -30,9 +30,9 @@
         </button>
         <div v-if="scanResult" class="result-box">
           <p>
-            新增: <strong>{{ scanResult.added }}</strong> | 更新:
-            <strong>{{ scanResult.updated }}</strong> | 删除:
-            <strong>{{ scanResult.deleted }}</strong>
+            新增: <strong>{{ scanResult.added }}</strong> | 
+            更新: <strong>{{ scanResult.updated }}</strong> | 
+            删除: <strong>{{ scanResult.deleted }}</strong>
           </p>
         </div>
         <p class="hint">支持格式: mp4, mkv, avi, mov, wmv, flv, webm</p>
@@ -46,9 +46,7 @@
               <span class="file-name">{{ file.name }}</span>
               <span v-if="file.ep_id" class="file-linked">✓ 已关联</span>
             </div>
-            <span class="file-meta"
-              >{{ formatFileSize(file.size) }} | {{ file.quickHash.slice(0, 8) }}</span
-            >
+            <span class="file-meta">{{ formatFileSize(file.size) }} | {{ file.quickHash.slice(0, 8) }}</span>
           </div>
         </div>
       </div>
@@ -58,48 +56,41 @@
     <div v-show="currentStep === 1" class="step-content">
       <div class="card">
         <h2>🔍 创建匹配任务</h2>
-        <button
-          @click="createMatch"
-          :disabled="isMatching || files.length === 0"
-          class="btn-primary"
-        >
+        <button @click="createMatch" :disabled="isMatching || files.length === 0" class="btn-primary">
           {{ isMatching ? '搜索中...' : '开始匹配搜索' }}
         </button>
         <p class="hint">
           将根据文件名解析出标题和集数，搜索 Bangumi 数据
-          <br />
+          <br>
           <small>已创建 {{ matchRecords.length }} 个匹配记录</small>
         </p>
       </div>
 
-      <div v-if="matchGroups.length > 0" class="card">
+      <div v-if="matchRecords.length > 0" class="card">
         <div class="match-header-bar">
-          <h3>匹配组 ({{ matchGroups.length }})</h3>
+          <h3>匹配记录 ({{ matchRecords.length }})</h3>
           <button @click="resumeUncompleted" class="btn-small">恢复未完成</button>
         </div>
-
+        
         <div class="match-list">
           <div
-            v-for="group in matchGroups"
-            :key="group.keyword"
-            :class="[
-              'match-item',
-              {
-                resolved: group.status === 'completed',
-                selected: group.status === 'selected' || group.status === 'mapping',
-              },
-            ]"
+            v-for="record in matchRecords"
+            :key="record.keyword"
+            :class="['match-item', { 
+              resolved: record.status === 'completed',
+              selected: record.status === 'selected' || record.status === 'mapping'
+            }]"
           >
             <div class="match-header">
               <div class="match-title">
-                <span class="keyword">{{ group.keyword }}</span>
-                <span class="badge" :class="getStatusClass(group.status)">{{ group.status }}</span>
+                <span class="keyword">{{ record.keyword }}</span>
+                <span class="badge" :class="getStatusClass(record.status)">{{ record.status }}</span>
               </div>
               <div class="match-actions">
-                <span class="match-files">{{ getFileCount(group) }} 个文件</span>
-                <button
-                  v-if="group.status === 'completed'"
-                  @click="saveSingleMatch(group.keyword)"
+                <span class="match-files">{{ getFileCount(record) }} 个文件</span>
+                <button 
+                  v-if="record.status === 'completed'" 
+                  @click="saveSingleMatch(record.keyword)"
                   class="btn-small btn-success"
                   :disabled="isSaving"
                 >
@@ -108,49 +99,46 @@
               </div>
             </div>
 
-            <!-- 候选列表 -->
-            <div
-              v-if="group.candidates.length > 0 && group.status !== 'completed'"
-              class="candidates"
-            >
+            <!-- 候选列表 (idle 或 selected 状态显示) -->
+            <div v-if="candidatesMap.has(record.keyword) && record.status !== 'completed'" class="candidates">
               <div class="section-title">选择匹配的动画:</div>
               <div
-                v-for="anime in group.candidates"
+                v-for="anime in candidatesMap.get(record.keyword) || []"
                 :key="anime.id"
-                :class="['candidate-item', { selected: group.selectedAnimeId === anime.id }]"
-                @click="selectAnime(group.keyword, anime.id)"
+                :class="['candidate-item', { selected: record.selected_anime_id === anime.id }]"
+                @click="selectAnime(record.keyword, anime.id)"
               >
                 <img v-if="anime.image" :src="anime.image" class="anime-cover" loading="lazy" />
                 <div class="anime-info">
                   <div class="anime-name">{{ anime.name_cn || anime.name }}</div>
                   <div class="anime-meta">
-                    评分: {{ anime.rating?.score || 'N/A' }} | 集数: {{ anime.eps }} | 日期:
-                    {{ anime.date || '未知' }}
+                    评分: {{ anime.rating?.score || 'N/A' }} | 
+                    集数: {{ anime.eps }} | 
+                    日期: {{ anime.date || '未知' }}
                   </div>
                 </div>
               </div>
             </div>
 
             <!-- 已选择但未完成 -->
-            <div
-              v-else-if="group.status === 'selected' || group.status === 'mapping'"
-              class="selected-info"
-            >
+            <div v-else-if="record.status === 'selected' || record.status === 'mapping'" class="selected-info">
               <div class="section-title">已选择:</div>
               <div class="selected-anime">
-                {{ getSelectedAnimeName(group) }}
+                {{ getSelectedAnimeName(record) }}
               </div>
-              <button @click="showMapping(group.keyword)" class="btn-secondary">
+              <button @click="showMapping(record.keyword)" class="btn-secondary">
                 配置集数映射
               </button>
             </div>
 
             <!-- 映射配置区域 -->
-            <div v-if="showMappingFor === group.keyword" class="mapping-section">
+            <div v-if="showMappingFor === record.keyword" class="mapping-section">
               <h4>集数映射配置</h4>
-              <div class="mapping-hint">文件已按集数分组，确认映射关系后点击完成</div>
+              <div class="mapping-hint">
+                文件已按集数分组，确认映射关系后点击完成
+              </div>
               <div class="mapping-list">
-                <div v-for="(fileIds, epNum) in group.files" :key="epNum" class="mapping-row">
+                <div v-for="(fileIds, epNum) in record.draft_mappings" :key="epNum" class="mapping-row">
                   <span class="ep-num">第 {{ epNum }} 集</span>
                   <span class="file-detail">{{ fileIds.length }} 个文件</span>
                   <div class="file-names">
@@ -161,7 +149,7 @@
                 </div>
               </div>
               <div class="mapping-actions">
-                <button @click="confirmMapping(group.keyword)" class="btn-primary">
+                <button @click="confirmMapping(record.keyword)" class="btn-primary">
                   ✓ 确认并完成
                 </button>
                 <button @click="showMappingFor = null" class="btn-text">取消</button>
@@ -169,7 +157,7 @@
             </div>
 
             <!-- 已完成但未保存 -->
-            <div v-if="group.status === 'completed'" class="completed-badge">
+            <div v-if="record.status === 'completed'" class="completed-badge">
               ✓ 匹配完成，等待保存到数据库
             </div>
           </div>
@@ -177,9 +165,9 @@
       </div>
 
       <!-- 批量保存 -->
-      <div v-if="completedGroups.length > 0" class="card">
+      <div v-if="completedRecords.length > 0" class="card">
         <h3>批量操作</h3>
-        <p>有 {{ completedGroups.length }} 个已完成匹配的组等待保存</p>
+        <p>有 {{ completedRecords.length }} 个已完成匹配的记录等待保存</p>
         <button @click="saveAllMatches" class="btn-primary" :disabled="isSaving">
           {{ isSaving ? '保存中...' : '全部保存到数据库' }}
         </button>
@@ -255,7 +243,7 @@
       <div class="card">
         <h2>🔄 状态恢复测试</h2>
         <p class="hint">模拟页面刷新后，从数据库恢复匹配状态</p>
-
+        
         <div class="recovery-stats">
           <div class="stat-box">
             <div class="stat-title">Idle</div>
@@ -280,7 +268,7 @@
         </div>
 
         <button @click="testRecovery" class="btn-primary">测试恢复流程</button>
-        <button @click="autoResume" class="btn-secondary" style="margin-left: 10px">
+        <button @click="autoResume" class="btn-secondary" style="margin-left: 10px;">
           自动恢复所有
         </button>
       </div>
@@ -309,7 +297,7 @@
       </details>
       <details>
         <summary>Pending Matches</summary>
-        <pre>{{ JSON.stringify(pendingMatches, null, 2) }}</pre>
+        <pre>{{ JSON.stringify(pendingRecords, null, 2) }}</pre>
       </details>
     </div>
   </div>
@@ -327,7 +315,7 @@ import {
 import { saveMatchResult } from '@/services/dataWriter'
 import { fileAPI, matchAPI, animeAPI, episodeAPI, debugAPI } from '@/services/storage'
 import type { VideoFile } from '@/models/File'
-import type { MatchRecord, MatchPreviewGroup, MatchStatus } from '@/models/Match'
+import type { MatchRecord, MatchStatus } from '@/models/Match'
 import type { BangumiAnime } from '@/models/Bangumi'
 import type { Anime, Episode } from '@/models/Anime'
 
@@ -343,7 +331,7 @@ const currentStep = ref(0)
 // 数据状态
 const files = ref<VideoFile[]>([])
 const matchRecords = ref<MatchRecord[]>([])
-const matchGroups = ref<MatchPreviewGroup[]>([])
+const candidatesMap = ref<Map<string, BangumiAnime[]>>(new Map())
 const animeList = ref<Anime[]>([])
 const episodes = ref<Episode[]>([])
 const selectedAnimeEpisodes = ref<Episode[]>([])
@@ -357,13 +345,13 @@ const showMappingFor = ref<string | null>(null)
 const recoveryLog = ref<{ time: string; message: string; type: 'info' | 'success' | 'error' }[]>([])
 
 // 计算属性
-const pendingMatches = computed(() => matchRecords.value.filter((r) => r.status !== 'completed'))
-const completedGroups = computed(() => matchGroups.value.filter((g) => g.status === 'completed'))
+const pendingRecords = computed(() => matchRecords.value.filter(r => r.status !== 'completed'))
+const completedRecords = computed(() => matchRecords.value.filter(r => r.status === 'completed'))
 const statusCount = computed(() => ({
-  idle: matchRecords.value.filter((r) => r.status === 'idle').length,
-  selected: matchRecords.value.filter((r) => r.status === 'selected').length,
-  mapping: matchRecords.value.filter((r) => r.status === 'mapping').length,
-  completed: matchRecords.value.filter((r) => r.status === 'completed').length,
+  idle: matchRecords.value.filter(r => r.status === 'idle').length,
+  selected: matchRecords.value.filter(r => r.status === 'selected').length,
+  mapping: matchRecords.value.filter(r => r.status === 'mapping').length,
+  completed: matchRecords.value.filter(r => r.status === 'completed').length,
 }))
 
 // 初始化
@@ -377,11 +365,6 @@ async function loadAllData() {
   animeList.value = await animeAPI.getAll()
   episodes.value = await episodeAPI.getAll()
   selectedAnimeEpisodes.value = []
-
-  // 如果有匹配记录，自动加载匹配组视图
-  if (matchRecords.value.length > 0) {
-    await loadMatchGroups()
-  }
 }
 
 // 工具函数
@@ -394,21 +377,23 @@ function formatFileSize(bytes: number): string {
 }
 
 function getFileName(fileId: string): string {
-  const file = files.value.find((f) => f.id === fileId)
+  const file = files.value.find(f => f.id === fileId)
   return file ? file.name.slice(0, 30) + '...' : '未知文件'
 }
 
-function getFileCount(group: MatchPreviewGroup): number {
-  return Object.values(group.files).flat().length
+function getFileCount(record: MatchRecord): number {
+  return Object.values(record.draft_mappings).flat().length
 }
 
-function getSelectedAnimeName(group: MatchPreviewGroup): string {
-  const anime = group.candidates.find((a) => a.id === group.selectedAnimeId)
-  return anime ? anime.name_cn || anime.name : '未知'
+function getSelectedAnimeName(record: MatchRecord): string {
+  const animes = candidatesMap.value.get(record.keyword)
+  if (!animes) return '未知'
+  const anime = animes.find(a => a.id === record.selected_anime_id)
+  return anime ? (anime.name_cn || anime.name) : `ID: ${record.selected_anime_id}`
 }
 
 function getEpisodeCount(animeId: string): number {
-  return episodes.value.filter((e) => e.anime_id === animeId).length
+  return episodes.value.filter(e => e.anime_id === animeId).length
 }
 
 function getStatusClass(status?: MatchStatus) {
@@ -453,7 +438,7 @@ async function selectDirectory() {
 async function clearAllData() {
   if (!confirm('确定要清空所有数据吗？此操作不可恢复！')) return
   await debugAPI.clearAll()
-  matchGroups.value = []
+  candidatesMap.value.clear()
   recoveryLog.value = []
 }
 
@@ -467,7 +452,8 @@ async function createMatch() {
   try {
     isMatching.value = true
     const candidates = await createMatchService()
-    await loadMatchGroups(candidates)
+    candidatesMap.value = candidates
+    await loadAllData()
     addLog(`创建匹配完成，发现 ${candidates.size} 个匹配组`, 'success')
   } catch (err) {
     console.error(err)
@@ -478,45 +464,10 @@ async function createMatch() {
   }
 }
 
-async function loadMatchGroups(candidates?: Map<string, BangumiAnime[]>) {
-  // 重新加载匹配记录
-  matchRecords.value = await matchAPI.getAll()
-
-  const groups: MatchPreviewGroup[] = []
-
-  for (const record of matchRecords.value) {
-    // 构建 files 映射
-    const filesMap: Record<number, string[]> = {}
-    for (const [epNum, fileIds] of Object.entries(record.draft_mappings)) {
-      filesMap[parseInt(epNum)] = fileIds
-    }
-
-    // 如果有候选数据则使用，否则为空数组
-    const animes = candidates?.get(record.keyword) || []
-
-    groups.push({
-      key: record.keyword,
-      title: record.name,
-      season: record.season,
-      candidates: animes,
-      selectedAnimeId: record.selected_anime_id || undefined,
-      files: filesMap,
-      status: record.status,
-    })
-  }
-
-  matchGroups.value = groups
-}
-
 async function selectAnime(keyword: string, animeId: number) {
   try {
     await selectMatch(keyword, animeId)
-    // 更新本地状态
-    const group = matchGroups.value.find((g) => g.key === keyword)
-    if (group) {
-      group.selectedAnimeId = animeId
-      group.status = 'selected'
-    }
+    await loadAllData()
     addLog(`已选择 [${keyword}] -> ${animeId}`, 'success')
   } catch (err) {
     alert('选择失败: ' + (err as Error).message)
@@ -530,17 +481,12 @@ function showMapping(keyword: string) {
 
 async function confirmMapping(keyword: string) {
   try {
-    const group = matchGroups.value.find((g) => g.key === keyword)
-    if (!group) return
+    const record = matchRecords.value.find(r => r.keyword === keyword)
+    if (!record) return
 
-    await mappingMatch(keyword, group.files)
+    await mappingMatch(keyword, record.draft_mappings)
     await completeMatch(keyword)
-
-    // 更新本地状态
-    group.status = 'completed'
     showMappingFor.value = null
-
-    // 重新加载记录
     await loadAllData()
     addLog(`[${keyword}] 映射确认完成`, 'success')
   } catch (err) {
@@ -568,13 +514,13 @@ async function saveSingleMatch(keyword: string) {
 async function saveAllMatches() {
   try {
     isSaving.value = true
-    const completed = matchRecords.value.filter((r) => r.status === 'completed')
-
+    const completed = matchRecords.value.filter(r => r.status === 'completed')
+    
     for (const record of completed) {
       await saveMatchResult(record.keyword)
       addLog(`[${record.keyword}] 保存成功`, 'success')
     }
-
+    
     await loadAllData()
     alert(`成功保存 ${completed.length} 个匹配`)
   } catch (err) {
@@ -587,9 +533,8 @@ async function saveAllMatches() {
 }
 
 async function resumeUncompleted() {
-  // 恢复到匹配步骤，并自动加载未完成的
   currentStep.value = 1
-  await createMatch() // 这会重新搜索候选，恢复可继续的状态
+  await createMatch()
 }
 
 // 步骤3: 数据查看
@@ -601,50 +546,46 @@ async function viewEpisodes(animeId: string) {
 async function testRecovery() {
   recoveryLog.value = []
   addLog('开始恢复测试...')
-
-  // 模拟刷新：清空内存中的候选数据
-  matchGroups.value = matchGroups.value.map((g) => ({ ...g, candidates: [] }))
-
-  const pending = matchRecords.value.filter((r) => r.status !== 'completed')
+  
+  // 模拟刷新：清空候选数据
+  candidatesMap.value.clear()
+  
+  const pending = matchRecords.value.filter(r => r.status !== 'completed')
   addLog(`发现 ${pending.length} 个待恢复任务`)
-
+  
   // 恢复 idle 状态的搜索
-  const idleRecords = pending.filter((r) => r.status === 'idle')
+  const idleRecords = pending.filter(r => r.status === 'idle')
   if (idleRecords.length > 0) {
     addLog(`恢复 ${idleRecords.length} 个 idle 任务的搜索...`)
     try {
       const candidates = await createMatchService()
-      await loadMatchGroups(candidates)
+      candidatesMap.value = candidates
       addLog('搜索恢复完成', 'success')
     } catch (err) {
       addLog('搜索恢复失败: ' + (err as Error).message, 'error')
     }
   }
-
+  
   // 恢复 selected/mapping 状态
-  const selectedRecords = pending.filter((r) => r.status === 'selected' || r.status === 'mapping')
+  const selectedRecords = pending.filter(r => r.status === 'selected' || r.status === 'mapping')
   for (const record of selectedRecords) {
     addLog(`[${record.keyword}] 状态: ${record.status}, 已选 anime: ${record.selected_anime_id}`)
-    // 这里可以添加获取 episodes 的逻辑
   }
 }
 
 async function autoResume() {
   recoveryLog.value = []
   addLog('开始自动恢复...')
-
-  // 1. 先恢复所有搜索
+  
   await testRecovery()
-
-  // 2. 提示用户确认映射
-  const mappingCount = matchRecords.value.filter((r) => r.status === 'selected').length
+  
+  const mappingCount = matchRecords.value.filter(r => r.status === 'selected').length
   if (mappingCount > 0) {
     addLog(`有 ${mappingCount} 个任务等待映射确认，请手动确认`, 'info')
     currentStep.value = 1
   }
-
-  // 3. 自动保存所有 completed
-  const completedCount = matchRecords.value.filter((r) => r.status === 'completed').length
+  
+  const completedCount = matchRecords.value.filter(r => r.status === 'completed').length
   if (completedCount > 0) {
     addLog(`发现 ${completedCount} 个已完成任务，自动保存...`)
     await saveAllMatches()
@@ -657,10 +598,7 @@ async function autoResume() {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
+  font-family: system-ui, -apple-system, sans-serif;
   background: #f5f5f5;
   min-height: 100vh;
 }
@@ -716,7 +654,7 @@ h1 {
   background: white;
   padding: 10px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .step-item {
@@ -773,12 +711,10 @@ h1 {
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
-.card h2,
-.card h3,
-.card h4 {
+.card h2, .card h3, .card h4 {
   margin-top: 0;
   color: #444;
 }
@@ -912,22 +848,10 @@ h1 {
   text-transform: uppercase;
 }
 
-.badge-gray {
-  background: #9e9e9e;
-  color: white;
-}
-.badge-blue {
-  background: #2196f3;
-  color: white;
-}
-.badge-yellow {
-  background: #ffc107;
-  color: black;
-}
-.badge-green {
-  background: #4caf50;
-  color: white;
-}
+.badge-gray { background: #9e9e9e; color: white; }
+.badge-blue { background: #2196f3; color: white; }
+.badge-yellow { background: #ffc107; color: black; }
+.badge-green { background: #4caf50; color: white; }
 
 .match-actions {
   display: flex;
@@ -1269,15 +1193,9 @@ h1 {
   min-width: 80px;
 }
 
-.log-item.success .log-msg {
-  color: #4caf50;
-}
-.log-item.error .log-msg {
-  color: #f44336;
-}
-.log-item.info .log-msg {
-  color: #333;
-}
+.log-item.success .log-msg { color: #4caf50; }
+.log-item.error .log-msg { color: #f44336; }
+.log-item.info .log-msg { color: #333; }
 
 /* 调试面板 */
 .debug-panel {
