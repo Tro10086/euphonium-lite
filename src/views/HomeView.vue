@@ -288,6 +288,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  Search, Menu, Grid, List, Loading, VideoCamera, VideoPlay,
+  Filter, StarFilled, CircleCheck, CircleCheckFilled
+} from '@element-plus/icons-vue'
 import { animeAPI, episodeAPI } from '@/services/storage'
 import type { Anime, Episode } from '@/models/Anime'
 import { ElMessage } from 'element-plus'
