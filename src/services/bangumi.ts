@@ -46,5 +46,5 @@ export async function getAnime(id: number): Promise<BangumiAnime> {
   const res = await fetch(`${BGM_API}/subjects/${id}`)
   if (!res.ok) throw new Error(`获取详情失败: ${res.status}`)
   const data = await res.json()
-  return data.data || []
+  return data || []
 }
