@@ -7,11 +7,13 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
-.DS_Store
+.pnpm-store
+
+# Build output
 dist
 dist-ssr
-coverage
 *.local
 
 # Editor directories and files
@@ -23,17 +25,33 @@ coverage
 *.njsproj
 *.sln
 *.sw?
+.DS_Store
 
-*.tsbuildinfo
-
-.eslintcache
-
-# Cypress
+# Testing
+coverage
 /cypress/videos/
 /cypress/screenshots/
-
-# Vitest
 __screenshots__/
 
+# TypeScript
+*.tsbuildinfo
+
 # Vite
+.vite
 *.timestamp-*-*.mjs
+
+# Linting
+.eslintcache
+
+# Generated type files (auto-import)
+auto-imports.d.ts
+components.d.ts
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Optional: if not using oxlint
+.oxlintrc.json
