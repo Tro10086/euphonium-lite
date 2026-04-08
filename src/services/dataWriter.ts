@@ -23,7 +23,7 @@ export async function saveMatchResult(keyword: string) {
         name_cn: bangumiAnime.name_cn,
         name: bangumiAnime.name,
         bangumi_id: bangumiAnime.id,
-        cover: bangumiAnime.image,
+        cover: bangumiAnime.images.large,
         summary: bangumiAnime.summary,
         bangumi_score: bangumiAnime.rating.score,
         tags: bangumiAnime.meta_tags,

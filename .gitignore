@@ -53,5 +53,4 @@ components.d.ts
 .env.*.local
 !.env.example
 
-# Optional: if not using oxlint
 .oxlintrc.json
