@@ -91,7 +91,7 @@
             </div>
 
             <div v-if="anime.status === 'watching'" class="progress-bar">
-              <div class="progress-fill" style="width: 45%"></div>
+              <div class="progress-fill" :style="{ width: getWatchProgress(anime.id) + '%' }"></div>
             </div>
           </div>
           
@@ -161,123 +161,142 @@
       </div>
     </el-main>
 
-    <!-- 抽屉详情 -->
+    <!-- 侧拉抽屉 -->
     <el-drawer
       v-model="drawerVisible"
-      :title="selectedAnime?.name_cn || '番剧详情'"
-      size="480px"
       :with-header="false"
+      size="420px"
       destroy-on-close
+      class="preview-drawer"
     >
       <div v-if="selectedAnime" class="drawer-content">
-        <!-- 封面区 -->
-        <div class="drawer-cover">
+        <!-- 沉浸式封面 -->
+        <div class="immersive-cover">
           <el-image
             v-if="selectedAnime.cover"
             :src="selectedAnime.cover"
             fit="cover"
+            class="cover-bg"
           />
-          <div v-else class="drawer-cover-placeholder">
+          <div v-else class="cover-bg-placeholder">
             <el-icon :size="64"><VideoCamera /></el-icon>
           </div>
-          <div class="drawer-play">
-            <el-button type="primary" :icon="VideoPlay" circle size="large" />
+          <div class="cover-gradient"></div>
+          <div class="cover-content">
+            <h2 class="drawer-title">{{ selectedAnime.name_cn }}</h2>
+            <p class="drawer-subtitle">{{ selectedAnime.name }}</p>
+            <div class="drawer-meta">
+              <el-tag :type="getStatusType(selectedAnime.status)" effect="dark" size="small">
+                {{ getStatusText(selectedAnime.status) }}
+              </el-tag>
+              <span>{{ selectedAnime.total_episodes }} 集</span>
+              <span v-if="selectedAnime.date">{{ selectedAnime.date }}</span>
+            </div>
           </div>
         </div>
 
-        <!-- 信息区 -->
-        <div class="drawer-info">
-          <h2>{{ selectedAnime.name_cn }}</h2>
-          <p class="original-name">{{ selectedAnime.name }}</p>
-          
-          <div class="info-tags">
-            <el-tag :type="getStatusType(selectedAnime.status)">
-              {{ getStatusText(selectedAnime.status) }}
-            </el-tag>
-            <span>{{ selectedAnime.total_episodes }} 集</span>
-            <span v-if="selectedAnime.date">首播: {{ selectedAnime.date }}</span>
-          </div>
-
+        <!-- 内容区 -->
+        <div class="drawer-body">
           <!-- Bangumi 评分 -->
-          <el-card v-if="selectedAnime.bangumi_score" class="score-card">
+          <div v-if="selectedAnime.bangumi_score" class="score-section">
             <div class="score-display">
-              <div class="score-number">{{ selectedAnime.bangumi_score }}</div>
-              <div class="score-bar">
-                <el-progress :percentage="selectedAnime.bangumi_score * 10" :show-text="false" :stroke-width="8" status="success" />
-                <div class="score-label">Bangumi 评分</div>
-              </div>
+              <span class="score-num">{{ selectedAnime.bangumi_score }}</span>
+              <el-progress 
+                :percentage="selectedAnime.bangumi_score * 10" 
+                :stroke-width="6"
+                :show-text="false"
+                status="success"
+                class="score-bar"
+              />
+              <span class="score-label">Bangumi</span>
             </div>
-          </el-card>
+          </div>
 
           <!-- 个人评分 -->
           <div class="rating-section">
-            <span class="rating-label">我的评分:</span>
+            <span class="section-label">我的评分</span>
             <el-rate
               v-model="userRating"
               :max="10"
               show-score
-              score-template="{value} 分"
+              score-template="{value}"
               @change="rateAnime"
             />
           </div>
 
-          <!-- 简介 -->
-          <el-descriptions title="简介" :column="1" border>
-            <el-descriptions-item>
+          <!-- 简介（可展开） -->
+          <div class="summary-section">
+            <div class="summary-header">
+              <span class="section-label">简介</span>
+              <el-button 
+                v-if="isSummaryLong" 
+                link 
+                type="primary" 
+                size="small"
+                @click="summaryExpanded = !summaryExpanded"
+              >
+                {{ summaryExpanded ? '收起' : '展开' }}
+                <el-icon>
+                  <ArrowUp v-if="summaryExpanded" />
+                  <ArrowDown v-else />
+                </el-icon>
+              </el-button>
+            </div>
+            <p 
+              class="summary-text" 
+              :class="{ 'is-collapsed': !summaryExpanded && isSummaryLong }"
+            >
               {{ selectedAnime.summary || '暂无简介' }}
-            </el-descriptions-item>
-          </el-descriptions>
+            </p>
+          </div>
 
           <!-- 标签 -->
           <div v-if="selectedAnime.tags?.length" class="tags-section">
-            <h4>标签</h4>
+            <span class="section-label">标签</span>
             <div class="tag-list">
               <el-tag
                 v-for="tag in selectedAnime.tags"
                 :key="tag"
-                class="clickable-tag"
+                effect="plain"
+                round
+                size="small"
               >
-                #{{ tag }}
+                {{ tag }}
               </el-tag>
             </div>
           </div>
 
-          <!-- 剧集列表 -->
-          <el-divider />
-          <div class="episodes-section">
-            <div class="episodes-header">
-              <h4>剧集 ({{ animeEpisodes.length }})</h4>
-              <el-button v-if="animeEpisodes.length > 0" link type="primary" @click="markAllWatched">
-                全部标记为已看
-              </el-button>
-            </div>
-            
-            <el-skeleton v-if="isLoadingEpisodes" :rows="3" animated />
-            
-            <el-empty v-else-if="animeEpisodes.length === 0" description="暂无剧集数据" />
-            
-            <div v-else class="episodes-list">
-              <div
-                v-for="ep in animeEpisodes"
+          <!-- 最近更新 -->
+          <div v-if="recentEpisodes.length > 0" class="recent-section">
+            <span class="section-label">最近更新</span>
+            <div class="recent-list">
+              <div 
+                v-for="ep in recentEpisodes.slice(0, 3)" 
                 :key="ep.id"
-                class="episode-item"
-                @click="toggleEpisodeWatched(ep)"
+                class="recent-item"
               >
-                <div class="episode-number">{{ ep.ep }}</div>
-                <div class="episode-info">
-                  <div class="episode-name">{{ ep.name_cn || ep.name || `第 ${ep.ep} 集` }}</div>
-                  <div class="episode-meta">
-                    <span v-if="ep.duration_seconds">{{ formatDuration(ep.duration_seconds) }}</span>
-                    <span v-if="ep.airdate">{{ ep.airdate }}</span>
-                    <el-tag v-if="ep.file_ids?.length" type="info" size="small">
-                      {{ ep.file_ids.length }} 个文件
-                    </el-tag>
-                  </div>
-                </div>
-                <el-icon v-if="ep.watched" class="watched-icon" color="#67c23a"><CircleCheckFilled /></el-icon>
-                <el-icon v-else class="unwatched-icon"><CircleCheck /></el-icon>
+                <span class="recent-ep">第 {{ ep.ep }} 集</span>
+                <span class="recent-name">{{ ep.name_cn || ep.name || '无标题' }}</span>
+                <el-icon v-if="ep.watched" color="#67c23a"><CircleCheckFilled /></el-icon>
               </div>
             </div>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div class="action-section">
+            <el-button type="primary" size="large" class="enter-btn" @click="enterDetail">
+              <el-icon><ArrowRight /></el-icon>
+              进入详情页
+            </el-button>
+            <el-button 
+              v-if="selectedAnime.status === 'watching'" 
+              type="success" 
+              size="large"
+              @click="continueWatching"
+            >
+              <el-icon><VideoPlay /></el-icon>
+              继续观看
+            </el-button>
           </div>
         </div>
       </div>
@@ -286,28 +305,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   Search, Menu, Grid, List, Loading, VideoCamera, VideoPlay,
-  Filter, StarFilled, CircleCheck, CircleCheckFilled
+  Filter, StarFilled, CircleCheckFilled, ArrowRight,
+  ArrowUp, ArrowDown
 } from '@element-plus/icons-vue'
 import { animeAPI, episodeAPI } from '@/services/storage'
 import type { Anime, Episode } from '@/models/Anime'
-import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 
 // 状态
 const isLoading = ref(true)
-const isLoadingEpisodes = ref(false)
 const animeList = ref<Anime[]>([])
-const animeEpisodes = ref<Episode[]>([])
+const episodesMap = ref<Map<string, Episode[]>>(new Map())
 const selectedAnime = ref<Anime | null>(null)
 const drawerVisible = ref(false)
 const searchQuery = ref('')
 const viewMode = ref<'grid' | 'list'>('grid')
 const userRating = ref(0)
+const summaryExpanded = ref(false)
 
 // 计算属性
 const filteredAnimeList = computed(() => {
@@ -319,6 +336,16 @@ const filteredAnimeList = computed(() => {
     anime.name?.toLowerCase().includes(query) ||
     anime.tags?.some(tag => tag.toLowerCase().includes(query))
   )
+})
+
+const isSummaryLong = computed(() => {
+  return (selectedAnime.value?.summary?.length || 0) > 120
+})
+
+const recentEpisodes = computed(() => {
+  if (!selectedAnime.value) return []
+  const eps = episodesMap.value.get(selectedAnime.value.id) || []
+  return eps.slice(-3).reverse()
 })
 
 // 方法
@@ -344,21 +371,24 @@ function getStatusType(status: string): '' | 'success' | 'warning' | 'info' | 'd
   return map[status] || 'info'
 }
 
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60)
-  const hrs = Math.floor(mins / 60)
-  if (hrs > 0) {
-    return `${hrs}h ${mins % 60}m`
-  }
-  return `${mins}m`
+function getWatchProgress(animeId: string): number {
+  const eps = episodesMap.value.get(animeId) || []
+  if (eps.length === 0) return 0
+  const watched = eps.filter(e => e.watched).length
+  return Math.round((watched / eps.length) * 100)
 }
 
 async function loadAnimeList() {
   isLoading.value = true
   try {
     animeList.value = await animeAPI.getAll()
+    // 预加载所有剧集（用于计算进度）
+    for (const anime of animeList.value) {
+      const eps = await episodeAPI.getByAnimeId(anime.id)
+      episodesMap.value.set(anime.id, eps)
+    }
   } catch (err) {
-    console.error('加载番剧列表失败:', err)
+    console.error('加载失败:', err)
     ElMessage.error('加载失败')
   } finally {
     isLoading.value = false
@@ -368,24 +398,18 @@ async function loadAnimeList() {
 async function openDrawer(anime: Anime) {
   selectedAnime.value = anime
   userRating.value = anime.rating || 0
+  summaryExpanded.value = false
   drawerVisible.value = true
-  isLoadingEpisodes.value = true
-  animeEpisodes.value = []
   
-  try {
-    animeEpisodes.value = await episodeAPI.getByAnimeId(anime.id)
-    animeEpisodes.value.sort((a, b) => a.ep - b.ep)
-  } catch (err) {
-    console.error('加载剧集失败:', err)
-    ElMessage.error('加载剧集失败')
-  } finally {
-    isLoadingEpisodes.value = false
+  // 确保有剧集数据
+  if (!episodesMap.value.has(anime.id)) {
+    const eps = await episodeAPI.getByAnimeId(anime.id)
+    episodesMap.value.set(anime.id, eps)
   }
 }
 
 async function rateAnime(val: number) {
   if (!selectedAnime.value) return
-  
   try {
     await animeAPI.update(selectedAnime.value.id, { rating: val })
     selectedAnime.value.rating = val
@@ -396,41 +420,28 @@ async function rateAnime(val: number) {
   }
 }
 
-async function toggleEpisodeWatched(episode: Episode) {
-  try {
-    await episodeAPI.update(episode.id, { watched: !episode.watched })
-    episode.watched = !episode.watched
-  } catch (err) {
-    console.error('更新观看状态失败:', err)
-    ElMessage.error('更新失败')
+function enterDetail() {
+  if (!selectedAnime.value) return
+  drawerVisible.value = false
+  router.push(`/anime/${selectedAnime.value.id}`)
+}
+
+function continueWatching() {
+  // 找到最近未看的集数，跳转播放
+  const eps = episodesMap.value.get(selectedAnime.value?.id || '') || []
+  const nextEp = eps.find(e => !e.watched) || eps[eps.length - 1]
+  if (nextEp) {
+    enterDetail()
+    // 详情页内处理自动播放
   }
 }
 
-async function markAllWatched() {
-  if (!selectedAnime.value || animeEpisodes.value.length === 0) return
-  
-  try {
-    await Promise.all(
-      animeEpisodes.value.map(ep => 
-        episodeAPI.update(ep.id, { watched: true })
-      )
-    )
-    animeEpisodes.value.forEach(ep => ep.watched = true)
-    ElMessage.success('已全部标记为已看')
-  } catch (err) {
-    console.error('批量标记失败:', err)
-    ElMessage.error('标记失败')
-  }
-}
-
-// 生命周期
 onMounted(() => {
   loadAnimeList()
 })
 </script>
 
 <style scoped>
-/* 布局 */
 .home-container {
   min-height: 100vh;
   background-color: #ffffff;
@@ -440,7 +451,7 @@ onMounted(() => {
   position: sticky;
   top: 0;
   z-index: 100;
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid #e4e7ed;
   padding: 0;
@@ -498,7 +509,6 @@ onMounted(() => {
   padding: 24px;
 }
 
-/* 工具栏 */
 .toolbar {
   display: flex;
   align-items: center;
@@ -514,14 +524,12 @@ onMounted(() => {
   font-size: 14px;
 }
 
-/* 加载状态 */
 .loading-state {
   display: flex;
   justify-content: center;
   padding: 80px 0;
 }
 
-/* 网格视图 */
 .anime-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -565,11 +573,6 @@ onMounted(() => {
   right: 12px;
   display: flex;
   justify-content: space-between;
-}
-
-.status-tag,
-.rating-tag {
-  font-weight: 600;
 }
 
 .play-icon {
@@ -646,7 +649,6 @@ onMounted(() => {
   color: #c0c4cc;
 }
 
-/* 列表视图 */
 .anime-list {
   display: flex;
   flex-direction: column;
@@ -726,85 +728,106 @@ onMounted(() => {
   font-weight: 600;
 }
 
-/* 抽屉内容 */
-.drawer-content {
-  padding-bottom: 24px;
-}
-
-.drawer-cover {
-  position: relative;
-  aspect-ratio: 16/9;
-  background: #303133;
+/* 侧拉抽屉样式 */
+.preview-drawer :deep(.el-drawer__body) {
+  padding: 0;
   overflow: hidden;
 }
 
-.drawer-cover :deep(.el-image) {
-  width: 100%;
+.drawer-content {
   height: 100%;
-  opacity: 0.9;
+  display: flex;
+  flex-direction: column;
 }
 
-.drawer-cover-placeholder {
+.immersive-cover {
+  position: relative;
+  height: 280px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.cover-bg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-bg-placeholder {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #909399;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
 }
 
-.drawer-play {
+.cover-gradient {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 50%, transparent 100%);
 }
 
-.drawer-info {
+.cover-content {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   padding: 24px;
+  color: #fff;
 }
 
-.drawer-info h2 {
+.drawer-title {
   font-size: 24px;
   font-weight: 700;
-  color: #303133;
   margin: 0 0 8px;
   line-height: 1.3;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
-.original-name {
+.drawer-subtitle {
   font-size: 14px;
-  color: #909399;
-  margin: 0 0 16px;
+  opacity: 0.8;
+  margin: 0 0 12px;
 }
 
-.info-tags {
+.drawer-meta {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.info-tags span {
   font-size: 13px;
-  color: #606266;
 }
 
-.score-card {
+.drawer-body {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.score-section {
   margin-bottom: 20px;
-  background: #f5f7fa;
 }
 
 .score-display {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 12px;
 }
 
-.score-number {
-  font-size: 36px;
+.score-num {
+  font-size: 32px;
   font-weight: 700;
   color: #67c23a;
 }
@@ -816,129 +839,98 @@ onMounted(() => {
 .score-label {
   font-size: 12px;
   color: #909399;
-  margin-top: 4px;
+  margin-left: 8px;
 }
 
 .rating-section {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   margin-bottom: 20px;
 }
 
-.rating-label {
+.summary-section {
+  margin-bottom: 20px;
+}
+
+.summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.summary-text {
   font-size: 14px;
+  line-height: 1.7;
   color: #606266;
-  font-weight: 500;
+  margin: 0;
+}
+
+.summary-text.is-collapsed {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .tags-section {
-  margin-top: 20px;
-}
-
-.tags-section h4 {
-  font-size: 14px;
-  color: #303133;
-  margin: 0 0 12px;
-  font-weight: 600;
+  margin-bottom: 20px;
 }
 
 .tag-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 12px;
 }
 
-.clickable-tag {
-  cursor: pointer;
+.recent-section {
+  margin-bottom: 20px;
 }
 
-.episodes-section {
-  margin-top: 20px;
-}
-
-.episodes-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.episodes-header h4 {
-  font-size: 14px;
-  color: #303133;
-  margin: 0;
-  font-weight: 600;
-}
-
-.episodes-list {
+.recent-list {
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
-.episode-item {
+.recent-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.episode-item:hover {
-  background-color: #f5f7fa;
-}
-
-.episode-number {
-  width: 32px;
-  height: 32px;
+  padding: 10px 12px;
   background: #f5f7fa;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 8px;
   font-size: 13px;
+}
+
+.recent-ep {
   font-weight: 600;
-  color: #606266;
-  flex-shrink: 0;
-}
-
-.episode-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.episode-name {
-  font-size: 14px;
   color: #303133;
-  margin-bottom: 4px;
-  white-space: nowrap;
+  min-width: 60px;
+}
+
+.recent-name {
+  flex: 1;
+  color: #606266;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.episode-meta {
+.action-section {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #909399;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #e4e7ed;
 }
 
-.watched-icon {
-  font-size: 20px;
+.enter-btn {
+  flex: 1;
 }
 
-.unwatched-icon {
-  font-size: 20px;
-  color: #dcdfe6;
-}
-
-/* 响应式 */
 @media (max-width: 768px) {
   .search-input {
     width: 180px;
@@ -957,6 +949,10 @@ onMounted(() => {
   .list-cover-placeholder {
     width: 100%;
     height: 160px;
+  }
+  
+  .immersive-cover {
+    height: 240px;
   }
 }
 </style>

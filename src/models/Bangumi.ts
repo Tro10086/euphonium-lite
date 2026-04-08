@@ -2,7 +2,7 @@ export interface BangumiAnime {
   id: number;
   date: string;
   platform: string;
-  image: string;
+  images: Record<'small' | 'grid' | 'large' | 'medium' | 'common', string>;
   summary: string;
   name: string;
   name_cn: string;
