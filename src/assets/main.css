@@ -1,35 +1,93 @@
 @import './base.css';
 
+/* 重置 #app 的默认布局（移除原有网格布局，让应用全宽） */
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
+  max-width: none;
+  margin: 0;
+  padding: 0;
   font-weight: normal;
+  display: block;
 }
 
-a,
-.green {
-  text-decoration: none;
-  color: hsla(160, 100%, 37%, 1);
-  transition: 0.4s;
-  padding: 3px;
+/* 全局容器辅助类 */
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
-@media (hover: hover) {
-  a:hover {
-    background-color: hsla(160, 100%, 37%, 0.2);
+/* 卡片通用样式 */
+.eu-card {
+  background: var(--eu-bg-card);
+  border: 1px solid var(--eu-border-light);
+  border-radius: var(--eu-radius-lg);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+.eu-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--eu-shadow-lg);
+}
+
+/* 按钮增强 */
+.el-button--primary {
+  background-color: var(--eu-color-primary);
+  border-color: var(--eu-color-primary);
+}
+.el-button--primary:hover {
+  background-color: #2563eb;
+  border-color: #2563eb;
+}
+
+/* 导航栏样式 (覆盖 Element Plus 默认) */
+.el-header {
+  --el-header-padding: 0 24px;
+  background-color: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--eu-border-light);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+@media (prefers-color-scheme: dark) {
+  .el-header {
+    background-color: rgba(30, 41, 59, 0.9);
   }
 }
 
-@media (min-width: 1024px) {
-  body {
-    display: flex;
-    place-items: center;
-  }
+/* 侧拉抽屉优化 */
+.el-drawer {
+  --el-drawer-bg-color: var(--eu-bg-card);
+}
+.el-drawer__body {
+  padding: 0;
+}
 
-  #app {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    padding: 0 2rem;
+/* 表格样式微调 */
+.el-table {
+  --el-table-border-color: var(--eu-border-light);
+  --el-table-tr-bg-color: var(--eu-bg-card);
+  --el-table-header-bg-color: var(--eu-bg-page);
+  border-radius: var(--eu-radius-md);
+  overflow: hidden;
+}
+
+/* 步骤条美化 */
+.el-step__title {
+  font-weight: 500;
+}
+.el-step.is-simple .el-step__title {
+  font-size: 14px;
+}
+
+/* 空状态插图颜色 */
+.el-empty__image {
+  opacity: 0.6;
+}
+
+/* 响应式辅助 */
+@media (max-width: 768px) {
+  .container {
+    padding: 0 16px;
   }
 }

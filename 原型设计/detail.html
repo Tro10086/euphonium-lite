@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>播放详情 | 葬送的芙莉莲 - Anime Library</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.3.4.3.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.1.0.7.js"></script>
+<style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            color: #37352f;
+            background-color: #ffffff;
+        }
+        .notion-shadow {
+            box-shadow: rgba(15, 15, 15, 0.1) 0px 0px 0px 1px, rgba(15, 15, 15, 0.1) 0px 2px 4px;
+        }
+        .episode-active {
+            background-color: #37352f !important;
+            color: white !important;
+        }
+        .scroll-hide::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-[#ffffff]">
+<!-- Navigation Bar -->
+<nav class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-[#e9e9e8] h-14 flex items-center justify-between px-6">
+<div class="flex items-center gap-4">
+<a class="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-100 rounded transition-colors text-sm text-gray-500" href="index.html">
+<iconify-icon icon="lucide:chevron-left"></iconify-icon>
+<span>返回图书馆</span>
+</a>
+<div class="h-4 w-[1px] bg-gray-300"></div>
+<span class="text-sm font-semibold truncate max-w-[200px]">葬送的芙莉莲</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-600 rounded text-xs font-bold border border-blue-100">
+<iconify-icon icon="lucide:eye"></iconify-icon>
+<span>正在看</span>
+</button>
+<button class="p-1.5 hover:bg-gray-100 rounded text-gray-500"><iconify-icon icon="lucide:heart"></iconify-icon></button>
+<button class="p-1.5 hover:bg-gray-100 rounded text-gray-500"><iconify-icon icon="lucide:share"></iconify-icon></button>
+</div>
+</nav>
+<main class="max-w-[1440px] mx-auto flex flex-col lg:flex-row h-[calc(100vh-3.5rem)]">
+<!-- Left Column: Video Player and Overview -->
+<div class="flex-1 flex flex-col border-r border-[#e9e9e8] overflow-y-auto scroll-hide bg-[#fbfbfa]">
+<!-- Player Section -->
+<div class="w-full bg-black aspect-video relative group">
+<img alt="Anime Frame" class="w-full h-full object-cover" src="https://modao.cc/agent-py/media/generated_images/2026-04-10/7585f39598a24e31abfff6576f3a0aa0.jpg"/>
+<div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-all cursor-pointer">
+<iconify-icon class="text-white text-7xl opacity-80 group-hover:opacity-100 transition-opacity" icon="lucide:play-circle"></iconify-icon>
+</div>
+<!-- Progress Info Overlay -->
+<div class="absolute bottom-6 left-6 right-6">
+<div class="bg-white/10 backdrop-blur-lg border border-white/20 p-3 rounded-lg flex items-center justify-between text-white text-xs">
+<div class="flex items-center gap-3">
+<iconify-icon class="text-blue-300" icon="lucide:info"></iconify-icon>
+<span>上次观看至第 18 话：05:24，是否继续？</span>
+</div>
+<button class="bg-white text-black px-3 py-1 rounded font-bold hover:bg-gray-200">恢复播放</button>
+</div>
+</div>
+</div>
+<!-- Content Area -->
+<div class="px-12 py-10 max-w-4xl mx-auto w-full">
+<div class="flex items-start justify-between mb-8">
+<div>
+<h1 class="text-4xl font-bold mb-4">葬送的芙莉莲</h1>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-0.5 bg-gray-100 rounded text-xs font-medium border">2023 · 10月</span>
+<span class="px-2 py-0.5 bg-gray-100 rounded text-xs font-medium border">Madhouse</span>
+<span class="px-2 py-0.5 bg-gray-100 rounded text-xs font-medium border">分镜设计极其考究</span>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<div class="text-4xl font-bold text-yellow-500 flex items-center gap-2">
+<span>9.6</span>
+<iconify-icon class="text-2xl fill-current" icon="lucide:star"></iconify-icon>
+</div>
+<span class="text-xs text-gray-400 mt-1">1,248 位用户评分</span>
+</div>
+</div>
+<!-- Tabs -->
+<div class="border-b border-[#e9e9e8] flex gap-8 mb-8">
+<button class="pb-3 border-b-2 border-black font-semibold text-sm">作品简介</button>
+<button class="pb-3 text-gray-400 hover:text-black transition-colors text-sm">角色信息</button>
+<button class="pb-3 text-gray-400 hover:text-black transition-colors text-sm">关联作品</button>
+<button class="pb-3 text-gray-400 hover:text-black transition-colors text-sm">粉丝评论</button>
+</div>
+<!-- Synopsis Section -->
+<div class="space-y-6 mb-12">
+<p class="text-[15px] leading-8 text-gray-700">
+                        勇者一行人打倒魔王后，迎来了和平的时代。作为长寿种的精灵芙莉莲，对于寿命只有短短几十年的伙伴们的死亡，起初并没有表现出太大的悲伤。然而，在送别了曾经并肩作战的勇者欣梅尔后，她突然意识到自己对人类生命、对伙伴的了解是多么匮乏。
+                    </p>
+<p class="text-[15px] leading-8 text-gray-700">
+                        为了“了解人类”，芙莉莲带着名为菲伦的徒弟，踏上了前往名为“欧雷欧尔”——也就是灵魂长眠之地的旅途。这是一个关于送别、关于时间、关于寻找意义的公路片。
+                    </p>
+<img alt="Screenshot" class="w-full rounded-xl notion-shadow border" src="https://modao.cc/agent-py/media/generated_images/2026-04-10/3b84dc65d3b94adcaca4aa5682cb9c0f.jpg"/>
+</div>
+<!-- More Info -->
+<div class="grid grid-cols-2 gap-8 py-8 border-t border-dashed border-gray-200">
+<div>
+<h4 class="text-xs font-bold text-gray-400 uppercase mb-4 tracking-widest">制作名单</h4>
+<ul class="space-y-2 text-sm">
+<li class="flex justify-between border-b border-gray-50 pb-2"><span class="text-gray-400">导演</span><span>斋藤圭一郎</span></li>
+<li class="flex justify-between border-b border-gray-50 pb-2"><span class="text-gray-400">剧本统筹</span><span>铃木智寻</span></li>
+<li class="flex justify-between border-b border-gray-50 pb-2"><span class="text-gray-400">音乐</span><span>Evan Call</span></li>
+</ul>
+</div>
+<div>
+<h4 class="text-xs font-bold text-gray-400 uppercase mb-4 tracking-widest">标签</h4>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-1 bg-blue-50 text-blue-500 rounded text-[10px] font-bold">#治愈系</span>
+<span class="px-2 py-1 bg-green-50 text-green-500 rounded text-[10px] font-bold">#公路片</span>
+<span class="px-2 py-1 bg-purple-50 text-purple-500 rounded text-[10px] font-bold">#魔法</span>
+<span class="px-2 py-1 bg-orange-50 text-orange-500 rounded text-[10px] font-bold">#年度最佳提名</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: Episodes and Notes -->
+<div class="w-full lg:w-96 flex flex-col overflow-y-auto scroll-hide bg-white">
+<!-- Episode List Section -->
+<div class="p-6 border-b border-[#e9e9e8]">
+<div class="flex items-center justify-between mb-4">
+<h3 class="font-bold">剧集列表</h3>
+<span class="text-xs text-gray-400">28 话全</span>
+</div>
+<div class="grid grid-cols-5 gap-2" id="episodeContainer">
+<!-- JS will fill this -->
+</div>
+</div>
+<!-- Personal Workspace Section -->
+<div class="p-8 flex-1">
+<h3 class="font-bold flex items-center gap-2 mb-6">
+<iconify-icon class="text-gray-400" icon="lucide:book-open"></iconify-icon>
+<span>个人追番空间</span>
+</h3>
+<div class="space-y-8">
+<!-- Status & Score -->
+<div class="space-y-4">
+<div class="group">
+<p class="text-[10px] text-gray-400 font-bold uppercase mb-2 group-hover:text-blue-500 transition-colors">观看状态</p>
+<select class="w-full bg-[#f7f7f5] border-transparent rounded-lg px-3 py-2 text-sm outline-none border focus:border-gray-200 transition-all appearance-none cursor-pointer">
+<option>想看 (Plan to Watch)</option>
+<option selected="">在看 (Watching)</option>
+<option>已看 (Completed)</option>
+<option>搁置 (On Hold)</option>
+</select>
+</div>
+<div>
+<p class="text-[10px] text-gray-400 font-bold uppercase mb-2">我的评分</p>
+<div class="flex gap-2">
+<iconify-icon class="text-yellow-400 text-xl cursor-pointer hover:scale-125 transition-transform" icon="lucide:star"></iconify-icon>
+<iconify-icon class="text-yellow-400 text-xl cursor-pointer hover:scale-125 transition-transform" icon="lucide:star"></iconify-icon>
+<iconify-icon class="text-yellow-400 text-xl cursor-pointer hover:scale-125 transition-transform" icon="lucide:star"></iconify-icon>
+<iconify-icon class="text-yellow-400 text-xl cursor-pointer hover:scale-125 transition-transform" icon="lucide:star"></iconify-icon>
+<iconify-icon class="text-yellow-400 text-xl cursor-pointer hover:scale-125 transition-transform" icon="lucide:star-half"></iconify-icon>
+</div>
+</div>
+</div>
+<!-- Personal Notes -->
+<div>
+<p class="text-[10px] text-gray-400 font-bold uppercase mb-2">私人笔记</p>
+<textarea class="w-full h-48 bg-white border border-[#e9e9e8] rounded-lg p-4 text-sm leading-relaxed outline-none notion-shadow focus:ring-1 focus:ring-gray-300 transition-all" placeholder="在这里记录你的观看感受，支持 Markdown (Notion 风格)..."></textarea>
+</div>
+<!-- History Timeline -->
+<div>
+<p class="text-[10px] text-gray-400 font-bold uppercase mb-4">观看足迹</p>
+<div class="space-y-4">
+<div class="flex gap-3 relative">
+<div class="w-2 h-2 rounded-full bg-blue-500 mt-1.5 z-10"></div>
+<div class="absolute left-[3.5px] top-4 w-[1px] h-full bg-gray-100"></div>
+<div class="flex-1">
+<p class="text-xs font-bold text-gray-800">观看了第 18 话</p>
+<p class="text-[10px] text-gray-400 mt-0.5">2026年4月10日 · 20:30</p>
+</div>
+</div>
+<div class="flex gap-3 relative">
+<div class="w-2 h-2 rounded-full bg-gray-200 mt-1.5 z-10"></div>
+<div class="absolute left-[3.5px] top-4 w-[1px] h-full bg-gray-100"></div>
+<div class="flex-1">
+<p class="text-xs font-bold text-gray-400">观看了第 17 话</p>
+<p class="text-[10px] text-gray-400 mt-0.5">2026年4月08日 · 22:15</p>
+</div>
+</div>
+<div class="flex gap-3">
+<div class="w-2 h-2 rounded-full bg-gray-200 mt-1.5 z-10"></div>
+<div class="flex-1">
+<p class="text-xs font-bold text-gray-400">加入书架</p>
+<p class="text-[10px] text-gray-400 mt-0.5">2026年3月28日</p>
+</div>
+</div>
+</div>
+</div>
+<button class="w-full py-2.5 bg-[#f7f7f5] hover:bg-gray-100 border border-[#e9e9e8] rounded-lg text-xs font-bold transition-colors">
+                        保存同步到云端
+                    </button>
+</div>
+</div>
+</div>
+</main>
+<script>
+        // Generate Episodes
+        const container = document.getElementById('episodeContainer');
+        const currentEp = 18;
+        for (let i = 1; i <= 28; i++) {
+            const btn = document.createElement('button');
+            btn.className = `h-10 border rounded flex items-center justify-center text-xs font-medium transition-all ${i === currentEp ? 'episode-active notion-shadow scale-105' : 'hover:bg-gray-50 bg-[#f7f7f5] text-gray-500'}`;
+            if (i < currentEp) btn.innerHTML = `${i} <iconify-icon icon="lucide:check" class="ml-1 text-[8px]"></iconify-icon>`;
+            else btn.innerText = i;
+            
+            btn.onclick = () => {
+                // Logic for switching episode (simulated)
+                alert(`正在加载第 ${i} 话...`);
+            };
+            container.appendChild(btn);
+        }
+    </script>
+</body>
+</html>

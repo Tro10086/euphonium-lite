@@ -16,6 +16,11 @@ export interface Anime {
   created_at: Date // 创建时间
   updated_at: Date // 更新时间
   overall_notes?: string // 整体观后感（富文本）
+  
+  // 播放状态（新增）
+  last_watched_episode?: number // 最后观看到第几集
+  last_watched_position?: number // 该集时间点（秒）
+  last_watched_at?: Date // 最后观看时间
 }
 
 export interface Episode {
@@ -35,4 +40,8 @@ export interface Episode {
   notes?: string // 单集观后感（富文本）
   created_at: Date // 创建时间
   updated_at: Date // 更新时间
+  
+  // 播放进度（新增）
+  watch_progress?: number // 观看进度（秒）
+  watch_percentage?: number // 观看百分比（用于封面进度条）
 }

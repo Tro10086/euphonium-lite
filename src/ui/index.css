@@ -1,0 +1,123 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  /* Colors from the design */
+  --primary: #775a19;
+  --primary-container: #c5a059;
+  --primary-light: #ffdea5;
+  --background: #faf9f6;
+  --surface: #ffffff;
+  --surface-low: #f4f3f1;
+  --surface-dim: #dbdad7;
+  --on-surface: #1a1c1a;
+  --on-surface-variant: #4e4639;
+  --outline: #7f7667;
+  --outline-variant: #d1c5b4;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  
+  /* Fonts */
+  --font-headline: 'Manrope', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  
+  /* Shadows */
+  --shadow-ambient: 0 12px 40px rgba(26, 28, 26, 0.05);
+  --shadow-soft: 0 4px 14px rgba(119, 90, 25, 0.1);
+  --shadow-float: 0 8px 30px rgba(0, 0, 0, 0.08);
+}
+
+.dark {
+  --background: #0a0a0a;
+  --surface: #141414;
+  --surface-low: #1c1c1c;
+  --surface-dim: #252525;
+  --on-surface: #e8e8e8;
+  --on-surface-variant: #a0a0a0;
+  --outline: #333333;
+  --outline-variant: #2a2a2a;
+  --primary-light: #3d3218;
+  --shadow-ambient: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.dark .glass-panel {
+  background: rgba(10, 10, 10, 0.85);
+}
+
+.compact-mode .side-nav {
+  width: 80px;
+  padding: 32px 12px;
+}
+
+.compact-mode .with-sidebar .content-area {
+  margin-left: 80px;
+}
+
+.compact-mode .side-nav .nav-item span,
+.compact-mode .side-nav .btn-new span,
+.compact-mode .side-nav .nav-footer span {
+  display: none;
+}
+
+.compact-mode .side-nav .nav-item {
+  justify-content: center;
+  padding: 12px;
+}
+
+.compact-mode .side-nav .nav-footer {
+  display: flex;
+  justify-content: center;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--background);
+  color: var(--on-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, .font-headline {
+  font-family: var(--font-headline);
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.2s ease;
+}
+
+.glass-panel {
+  background: rgba(250, 249, 246, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--outline-variant);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--outline);
+}

@@ -7,10 +7,17 @@ export async function requestDirectory() {
   if (!window.showDirectoryPicker) {
     throw new Error('当前浏览器不支持 File System Access API，请使用 Chrome/Edge 等浏览器');
   }
-  const dirHandle = await window.showDirectoryPicker();
-  // 将目录句柄存储到 IndexedDB
-  await db.table('dirHandle').put({ id: 'main', handle: dirHandle });
-  return dirHandle;
+  try {
+    const dirHandle = await window.showDirectoryPicker();
+    // 将目录句柄存储到 IndexedDB
+    await db.table('dirHandle').put({ id: 'main', handle: dirHandle });
+    return dirHandle;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('用户取消了目录选择');
+    }
+    throw new Error('获取目录权限失败: ' + (error instanceof Error ? error.message : String(error)));
+  }
 }
 
 // 恢复已授权的目录句柄
