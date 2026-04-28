@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { uiState } from '@/ui/stores/uiState';
 import { FolderOpen, HardDrive, Edit2, Radar, FileJson, FileCode, Check, HelpCircle, Trash2 } from 'lucide-vue-next';
 import BaseButton from '@/ui/components/BaseButton.vue';
 import type { BangumiAnime } from '@/models/Bangumi';

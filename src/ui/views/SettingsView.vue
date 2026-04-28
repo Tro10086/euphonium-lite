@@ -7,8 +7,26 @@ import { debugAPI } from '@/services/storage';
 import { downloadBackupJson, formatImportResult, importBackupJsonFile, reloadAfterImport } from '@/ui/utils/backupTransfer';
 import { parseDetailedVideoFileName } from '@/utils/fileNameParser';
 
+type FileNameParseTestResult = {
+  title: string;
+  season: number;
+  episode: number | null;
+  episodeEnd: number | null;
+  confidence: number;
+  titleCandidates: string[];
+  releaseGroup: string | null;
+  resolution: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  source: string | null;
+  subLanguages: string[];
+  extraTags: string[];
+  isSpecial: boolean;
+  warnings: string[];
+};
+
 const testInput = ref('');
-const testResult = ref<any>(null);
+const testResult = ref<FileNameParseTestResult | null>(null);
 const isTesting = ref(false);
 const showTestError = ref(false);
 const dataMessage = ref('');

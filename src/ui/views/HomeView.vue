@@ -100,7 +100,7 @@ const toggleSort = () => {
   uiState.sortOrder = uiState.sortOrder === 'newest' ? 'oldest' : 'newest';
 };
 
-const enterTheatre = (item: any) => {
+const enterTheatre = (item: CollectionItem) => {
   uiState.selectedMedia = null;
   router.push({ name: 'theatre', params: { id: item.id } });
 };

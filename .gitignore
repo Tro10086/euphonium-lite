@@ -11,6 +11,9 @@ lerna-debug.log*
 node_modules
 .pnpm-store
 
+# Package manager
+package-lock.json
+
 # Build output
 dist
 dist-ssr
@@ -52,5 +55,3 @@ components.d.ts
 .env.local
 .env.*.local
 !.env.example
-
-.oxlintrc.json

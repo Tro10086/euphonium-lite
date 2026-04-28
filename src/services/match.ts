@@ -32,9 +32,6 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
 
     if (!title) continue
 
-    const seasonStr = parsed.season === 1 ? '' : `第${parsed.season}季`
-    const keyword = `${title}${seasonStr}`
-
     const entry =
       pendingKeywords.get(folderKey) ??
       pendingKeywords
