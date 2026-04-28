@@ -46,10 +46,6 @@ __screenshots__/
 # Linting
 .eslintcache
 
-# Generated type files (auto-import)
-auto-imports.d.ts
-components.d.ts
-
 # Environment files
 .env
 .env.local
