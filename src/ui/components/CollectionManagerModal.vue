@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { mockStore } from '@/ui/stores/mockData';
+import { uiState } from '@/ui/stores/uiState';
 import { X, Plus, Trash2, GripVertical } from 'lucide-vue-next';
 
 interface NavItem {
@@ -13,9 +13,9 @@ const newCollectionName = ref('');
 const draggedIndex = ref<number | null>(null);
 
 // Initialize local list when modal opens
-watch(() => mockStore.isCollectionModalOpen, (isOpen) => {
+watch(() => uiState.isCollectionModalOpen, (isOpen) => {
   if (isOpen) {
-    localNavItems.value = [...mockStore.navItems];
+    localNavItems.value = [...uiState.navItems];
   }
 });
 
@@ -34,12 +34,12 @@ const removeCollection = (id: string) => {
 };
 
 const commitChanges = () => {
-  mockStore.navItems = [...localNavItems.value];
+  uiState.navItems = [...localNavItems.value];
   // If the currently filtered collection was removed, fallback to 'all'
-  if (!mockStore.navItems.find(item => item.id === mockStore.homeFilter)) {
-    mockStore.homeFilter = 'all';
+  if (!uiState.navItems.find(item => item.id === uiState.homeFilter)) {
+    uiState.homeFilter = 'all';
   }
-  mockStore.isCollectionModalOpen = false;
+  uiState.isCollectionModalOpen = false;
 };
 
 // Drag and drop handlers
@@ -55,6 +55,7 @@ const onDrop = (index: number) => {
   if (draggedIndex.value === null) return;
   const items = [...localNavItems.value];
   const item = items.splice(draggedIndex.value, 1)[0];
+  if (!item) return;
   items.splice(index, 0, item);
   localNavItems.value = items;
   draggedIndex.value = null;
@@ -63,11 +64,11 @@ const onDrop = (index: number) => {
 
 <template>
   <Transition name="modal">
-    <div v-if="mockStore.isCollectionModalOpen" class="modal-overlay" @click.self="mockStore.isCollectionModalOpen = false">
+    <div v-if="uiState.isCollectionModalOpen" class="modal-overlay" @click.self="uiState.isCollectionModalOpen = false">
       <div class="modal-content glass-panel">
         <header class="modal-header">
           <h3>编辑合集列表</h3>
-          <button class="close-btn" @click="mockStore.isCollectionModalOpen = false">
+          <button class="close-btn" @click="uiState.isCollectionModalOpen = false">
             <X :size="20" />
           </button>
         </header>

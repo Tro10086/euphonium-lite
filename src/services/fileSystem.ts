@@ -1,6 +1,7 @@
 import { db } from '@/db/db';
 import type { VideoFile } from '@/models/File';
-import { fileAPI } from './storage';
+import type { LibraryRoot } from '@/models/Library';
+import { fileAPI, libraryRootAPI } from './storage';
 
 // 授权目录
 export async function requestDirectory() {
@@ -20,6 +21,30 @@ export async function requestDirectory() {
   }
 }
 
+export async function requestLibraryRoot(): Promise<LibraryRoot> {
+  if (!window.showDirectoryPicker) {
+    throw new Error('当前浏览器不支持 File System Access API，请使用 Chrome/Edge 等浏览器');
+  }
+
+  const handle = await window.showDirectoryPicker();
+  const now = new Date();
+  const root: LibraryRoot = {
+    id: crypto.randomUUID(),
+    name: handle.name,
+    handle,
+    created_at: now,
+    updated_at: now,
+    last_granted_at: now,
+  };
+
+  await libraryRootAPI.add(root);
+  await db.dirHandle.bulkPut([
+    { id: root.id, handle },
+    { id: 'main', handle },
+  ]);
+  return root;
+}
+
 // 恢复已授权的目录句柄
 export async function getDirectoryHandle() {
   const record = await db.table('dirHandle').get('main');
@@ -30,6 +55,20 @@ export async function getDirectoryHandle() {
     }
   }
   return null;
+}
+
+export async function getLibraryRoots() {
+  return libraryRootAPI.getAll();
+}
+
+export async function ensureReadPermission(handle: FileSystemDirectoryHandle) {
+  const current = await handle.queryPermission({ mode: 'read' });
+  if (current === 'granted') return;
+
+  const requested = await handle.requestPermission({ mode: 'read' });
+  if (requested !== 'granted') {
+    throw new Error('需要重新授权媒体目录后才能继续');
+  }
 }
 
 function arrayBufferToHex(buffer: ArrayBuffer): string {
@@ -112,57 +151,94 @@ export async function scanVideos(dirHandle: FileSystemDirectoryHandle) {
   // await db.table('files').clear();
   // await db.table('files').bulkAdd(files);
   // return files;
-  const files = await scanDirectory(dirHandle);
+  const root: LibraryRoot = {
+    id: 'main',
+    name: dirHandle.name,
+    handle: dirHandle,
+    created_at: new Date(),
+    updated_at: new Date(),
+    last_granted_at: new Date(),
+  };
+  await libraryRootAPI.add(root);
+  await db.dirHandle.put({ id: root.id, handle: dirHandle });
+  return scanLibraryRoot(root);
+}
+
+export async function scanLibraryRoot(root: LibraryRoot) {
+  await ensureReadPermission(root.handle);
+
+  const files = await scanDirectory(root.handle);
   const now = Date.now();
 
-  const existingFiles = await fileAPI.getAll();
-  const existingByHash = new Map(existingFiles.map(f => [f.quickHash, f]));
+  const existingFiles = await fileAPI.getByRootId(root.id);
+  const existingByIdentity = new Map(existingFiles.map(f => [`${f.size}:${f.quickHash}`, f]));
+  const existingByPath = new Map(existingFiles.map(f => [f.path, f]));
 
   const toAdd: VideoFile[] = [];
   const toUpdate: VideoFile[] = [];
-  const processedHashes = new Set<string>();
+  const processedIdentities = new Set<string>();
+  const processedIds = new Set<string>();
 
   for (const { handle, name, path, parentPath } of files) {
     const file = await handle.getFile();
     const quickHash = await computeQuickHash(file);
+    const identity = `${file.size}:${quickHash}`;
 
-    if (processedHashes.has(quickHash)) {
+    if (processedIdentities.has(identity)) {
       console.warn(`重复文件跳过: ${path} (本次扫描中存在文件的采样哈希相同)`);
       continue;
     }
-    processedHashes.add(quickHash);
+    processedIdentities.add(identity);
 
-    const existing = existingByHash.get(quickHash);
+    const existing = existingByIdentity.get(identity) ?? existingByPath.get(path);
 
-    if (existing && file.size === existing.size) {
-      toUpdate.push({
+    if (existing) {
+      const updated: VideoFile = {
         ...existing,
+        root_id: root.id,
         name,
         path,
         parent_path: parentPath,
-        modified: file.lastModified,
-        lastScan: now
-      });
-    } else {
-      toAdd.push({
-        id: crypto.randomUUID(),
-        name,
-        path,
-        parent_path: parentPath,
-        ext: name.split('.').pop() || '',
+        ext: name.split('.').pop()?.toLowerCase() || '',
         size: file.size,
         modified: file.lastModified,
         quickHash,
-        lastScan: now
+        scan_state: 'active',
+        last_seen_at: now,
+        lastScan: now,
+      };
+      toUpdate.push(updated);
+      processedIds.add(existing.id);
+    } else {
+      toAdd.push({
+        id: crypto.randomUUID(),
+        root_id: root.id,
+        name,
+        path,
+        parent_path: parentPath,
+        ext: name.split('.').pop()?.toLowerCase() || '',
+        size: file.size,
+        modified: file.lastModified,
+        quickHash,
+        scan_state: 'active',
+        last_seen_at: now,
+        lastScan: now,
       });
     }
   }
 
-  const toDelete = existingFiles.filter(f => !processedHashes.has(f.quickHash)); 
+  const missing = existingFiles.filter(f => !processedIds.has(f.id) && !processedIdentities.has(`${f.size}:${f.quickHash}`));
 
   await fileAPI.add(toAdd);
   await fileAPI.update(toUpdate);
-  await fileAPI.delete(toDelete);
+  await fileAPI.markMissing(missing);
+  await libraryRootAPI.update(root.id, { last_scanned_at: new Date() });
 
-  return { added: toAdd.length, updated: toUpdate.length, deleted: toDelete.length };
+  return {
+    root,
+    files: [...toAdd, ...toUpdate],
+    added: toAdd.length,
+    updated: toUpdate.length,
+    missing: missing.length,
+  };
 }

@@ -5,12 +5,22 @@ export type MatchStatus =
   | 'completed' // 完成流程
 
 export interface MatchRecord {
-  keyword: string
+  folder_key?: string
+  root_id?: string
+  parent_path?: string
+  folder_name?: string
+  keyword: string // IndexedDB primary key; V2+ stores folder_key here for migration safety.
+  search_keyword?: string
   name: string
   season: number
   status?: MatchStatus
   selected_anime_id: number
+  selected_local_anime_id?: string
+  candidate_bangumi_ids?: number[]
   draft_mappings: Record<number, string[]>
+  unmapped_file_ids?: string[]
+  offset?: number
+  warnings?: string[]
   created_at?: Date
   updated_at?: Date
 }

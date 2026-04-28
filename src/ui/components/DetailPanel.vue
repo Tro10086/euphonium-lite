@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { mockStore } from '@/ui/stores/mockData';
+import { uiState } from '@/ui/stores/uiState';
 import { X, Heart, Star, Play } from 'lucide-vue-next';
 
 defineEmits(['close']);
@@ -10,6 +10,7 @@ const router = useRouter();
 const isExpanded = ref(false);
 const showExpandBtn = ref(false);
 const descRef = ref<HTMLElement | null>(null);
+const selectedMedia = computed(() => uiState.selectedMedia);
 
 const checkTruncation = () => {
   nextTick(() => {
@@ -32,15 +33,15 @@ onUnmounted(() => {
   window.removeEventListener('resize', checkTruncation);
 });
 
-watch(() => mockStore.selectedMedia, () => {
+watch(() => uiState.selectedMedia, () => {
   isExpanded.value = false;
   checkTruncation();
 });
 
 const goToTheatre = () => {
-  if (!mockStore.selectedMedia) return;
-  const id = mockStore.selectedMedia.id;
-  mockStore.selectedMedia = null;
+  if (!uiState.selectedMedia) return;
+  const id = uiState.selectedMedia.id;
+  uiState.selectedMedia = null;
   router.push({ name: 'theatre', params: { id } });
 };
 </script>
@@ -50,7 +51,7 @@ const goToTheatre = () => {
     <!-- Click outside overlay -->
     <div class="overlay" @click="$emit('close')"></div>
     
-    <aside class="detail-panel glass-panel">
+    <aside v-if="selectedMedia" class="detail-panel glass-panel">
       <!-- Header -->
     <header class="header">
       <button class="close-btn" @click="$emit('close')">
@@ -66,27 +67,27 @@ const goToTheatre = () => {
     <div class="panel-content">
       <!-- Media Hero -->
       <div class="hero-image">
-        <img :src="mockStore.selectedMedia.image" :alt="mockStore.selectedMedia.title" />
+        <img :src="selectedMedia.image" :alt="selectedMedia.title" />
       </div>
 
       <!-- Title & Score -->
       <div class="title-section">
         <div class="title-row">
-          <h2 class="title">{{ mockStore.selectedMedia.title }}</h2>
+          <h2 class="title">{{ selectedMedia.title }}</h2>
           <div class="score-badge">
             <Star :size="16" class="star-filled" />
-            <span>{{ mockStore.selectedMedia.score }}</span>
+            <span>{{ selectedMedia.score }}</span>
           </div>
         </div>
         <div class="tags-row">
-          <span class="year">{{ mockStore.selectedMedia.year }}</span>
+          <span class="year">{{ selectedMedia.year }}</span>
           <span class="dot">·</span>
-          <span class="epis">{{ mockStore.selectedMedia.episodes }} 集</span>
-          <span class="dot" v-if="mockStore.selectedMedia.tags?.length">·</span>
+          <span class="epis">{{ selectedMedia.episodes }} 集</span>
+          <span class="dot" v-if="selectedMedia.tags?.length">·</span>
           <div class="tag-group">
-            <span v-for="(tag, index) in mockStore.selectedMedia.tags" :key="tag" class="tag-pill">
+            <span v-for="(tag, index) in selectedMedia.tags" :key="tag" class="tag-pill">
               {{ tag }}
-              <span v-if="index < mockStore.selectedMedia.tags.length - 1" class="inner-dot">·</span>
+              <span v-if="index < selectedMedia.tags.length - 1" class="inner-dot">·</span>
             </span>
           </div>
         </div>
@@ -96,7 +97,7 @@ const goToTheatre = () => {
       <div class="progress-card">
         <div class="progress-header">
           <span class="progress-label">观看进度</span>
-          <span class="progress-stats">已观看 4 / {{ mockStore.selectedMedia.episodes }} 集</span>
+          <span class="progress-stats">已观看 4 / {{ selectedMedia.episodes }} 集</span>
         </div>
         <div class="progress-bar">
           <div class="progress-fill" style="width: 33%"></div>
@@ -111,7 +112,7 @@ const goToTheatre = () => {
           class="description" 
           :class="{ 'expanded': isExpanded }"
         >
-          {{ mockStore.selectedMedia.desc }}
+          {{ selectedMedia.desc }}
         </p>
         <button 
           v-if="showExpandBtn" 

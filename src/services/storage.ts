@@ -3,6 +3,32 @@ import type { Anime, Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 import type { WatchHistory } from '@/models/History'
 import type { MatchRecord } from '@/models/Match'
+import type { LibraryRoot } from '@/models/Library'
+import { notesDb } from '@/services/notes'
+
+const toDate = (value: Date | string | number | null | undefined): Date | null => {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+export const libraryRootAPI = {
+  async add(root: LibraryRoot) {
+    return db.libraryRoots.put(root)
+  },
+
+  async getById(id: string) {
+    return db.libraryRoots.get(id)
+  },
+
+  async getAll() {
+    return db.libraryRoots.toArray()
+  },
+
+  async update(id: string, changes: Omit<Partial<LibraryRoot>, 'id' | 'created_at'>) {
+    return db.libraryRoots.update(id, { ...changes, updated_at: new Date() })
+  },
+}
 
 export const animeAPI = {
   async add(anime: Omit<Anime, 'id' | 'rating' | 'status' | 'created_at' | 'updated_at'>) {
@@ -12,8 +38,11 @@ export const animeAPI = {
       id: crypto.randomUUID(),
       rating: 0,
       status: 'planned',
+      is_favorite: anime.is_favorite ?? false,
       created_at: now,
       updated_at: now,
+      deleted_at: null,
+      purge_requested_at: null,
     }
     return db.anime.add(newAnime)
   },
@@ -34,8 +63,63 @@ export const animeAPI = {
     return db.anime.update(id, { ...changes, updated_at: new Date() })
   },
 
+  async moveToTrash(id: string) {
+    return db.anime.update(id, {
+      deleted_at: new Date(),
+      purge_requested_at: null,
+      updated_at: new Date(),
+    })
+  },
+
+  async restoreFromTrash(id: string) {
+    return db.anime.update(id, {
+      deleted_at: null,
+      purge_requested_at: null,
+      updated_at: new Date(),
+    })
+  },
+
+  async markTrashDeleted(id: string) {
+    return db.anime.update(id, {
+      deleted_at: new Date(),
+      purge_requested_at: new Date(),
+      updated_at: new Date(),
+    })
+  },
+
+  async markTrashDeletedBulk(ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids))
+    const now = new Date()
+    await Promise.all(uniqueIds.map((id) => db.anime.update(id, {
+      deleted_at: now,
+      purge_requested_at: now,
+      updated_at: now,
+    })))
+    return uniqueIds.length
+  },
+
+  async purgeExpiredTrash(days = 7) {
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const expired = await db.anime
+      .filter((anime) => {
+        const deletedAt = toDate(anime.deleted_at)
+        return deletedAt && !anime.purge_requested_at ? deletedAt.getTime() <= cutoff : false
+      })
+      .toArray()
+
+    if (expired.length === 0) return 0
+
+    const now = new Date()
+    await Promise.all(expired.map((anime) => db.anime.update(anime.id, {
+      purge_requested_at: now,
+      updated_at: now,
+    })))
+
+    return expired.length
+  },
+
   async delete(id: string) {
-    return db.anime.delete(id)
+    return this.moveToTrash(id)
   },
 }
 
@@ -116,12 +200,22 @@ export const fileAPI = {
     return db.files.toArray()
   },
 
+  async getByRootId(rootId: string) {
+    return db.files.where('root_id').equals(rootId).toArray()
+  },
+
   async add(files: VideoFile[]) {
     if (files.length) await db.files.bulkAdd(files)
   },
 
   async update(files: VideoFile[]) {
     if (files.length) await db.files.bulkPut(files)
+  },
+
+  async markMissing(files: VideoFile[]) {
+    if (files.length) {
+      await db.files.bulkPut(files.map((file) => ({ ...file, scan_state: 'missing' as const })))
+    }
   },
 
   // // 删除文件时不采用级联删除，而是将episode表中的file_id设置为空
@@ -182,20 +276,37 @@ export const matchAPI = {
     return db.match.toArray()
   },
 
-  async delete(keyword: string) {
-    return db.match.delete(keyword)
+  async delete(key: string) {
+    const existing = await this.getByFolderKey(key)
+    return db.match.delete(existing?.keyword ?? key)
   },
 
   async getByKeyword(keyword: string) {
-    return db.match.get(keyword)
+    return (
+      (await db.match.where('search_keyword').equals(keyword).first()) ??
+      (await db.match.where('keyword').equals(keyword).first())
+    )
+  },
+
+  async getByFolderKey(folderKey: string) {
+    return db.match.where('folder_key').equals(folderKey).first()
+  },
+
+  async getByKey(key: string) {
+    return db.match.get(key)
   },
 
   async add(
     match: Omit<MatchRecord, 'status' | 'selected_anime_id' | 'created_at' | 'updated_at'>,
   ) {
     const now = new Date()
+    const folderKey = match.folder_key ?? match.keyword
+    const searchKeyword = match.search_keyword ?? match.keyword
     const newMatchRecord: MatchRecord = {
       ...match,
+      keyword: folderKey,
+      folder_key: folderKey,
+      search_keyword: searchKeyword,
       status: 'idle',
       selected_anime_id: 0,
       created_at: now,
@@ -205,16 +316,33 @@ export const matchAPI = {
   },
 
   async update(
-    keyword: string,
+    key: string,
     changes: Omit<Partial<MatchRecord>, 'keyword' | 'name' | 'season' | 'created_at'>,
   ) {
-    return db.match.update(keyword, { ...changes, updated_at: new Date() })
+    const existing = await this.getByFolderKey(key)
+    return db.match.update(existing?.keyword ?? key, { ...changes, updated_at: new Date() })
+  },
+
+  async claimForImport(key: string, bangumiId: number) {
+    let claimed = false
+    await db.transaction('rw', db.match, async () => {
+      const existing = await this.getByFolderKey(key)
+      if (!existing || existing.status !== 'idle') return
+
+      await db.match.update(existing.keyword, {
+        status: 'mapping',
+        selected_anime_id: bangumiId,
+        updated_at: new Date(),
+      })
+      claimed = true
+    })
+
+    return claimed
   },
 }
 
 export const debugAPI = {
   async clearAll() {
-    await db.delete()
-    window.location.reload()
+    await Promise.all([db.delete(), notesDb.delete()])
   },
 }

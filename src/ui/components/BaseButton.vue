@@ -40,6 +40,18 @@ withDefaults(defineProps<Props>(), {
   white-space: nowrap;
 }
 
+.base-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.base-btn:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 /* Variants */
 .variant-primary {
   background: linear-gradient(to right, var(--primary), var(--primary-container));

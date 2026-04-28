@@ -1,17 +1,69 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { mockStore } from '@/ui/stores/mockData';
-import { 
-  Play, PlayCircle, BookmarkPlus, Star, Maximize, Pause, 
-  Volume2, VolumeX, ChevronDown, Heart, SkipBack, SkipForward 
+import type { Anime, Episode } from '@/models/Anime';
+import type { VideoFile } from '@/models/File';
+import type { TipTapJSON } from '@/models/Note';
+import { animeAPI, episodeAPI, fileAPI } from '@/services/storage';
+import { createPlaybackUrl, revokePlaybackUrl } from '@/services/playback';
+import { attachmentAPI, notesAPI } from '@/services/notes';
+import {
+  Play, PlayCircle, Star, Maximize, Pause,
+  Volume2, VolumeX, ChevronDown, Heart, SkipBack, SkipForward
 } from 'lucide-vue-next';
 
 const route = useRoute();
+const videoRef = ref<HTMLVideoElement | null>(null);
+const realAnime = ref<Anime | null>(null);
+const realEpisodes = ref<Episode[]>([]);
+const filesByEpisode = ref<Record<string, VideoFile[]>>({});
+const isLoading = ref(false);
+const playbackError = ref('');
+const videoUrl = ref('');
+const noteId = ref<string | null>(null);
+const noteText = ref('');
+const noteAttachmentIds = ref<string[]>([]);
+const noteMessage = ref('');
+
+const hasRealData = computed(() => Boolean(realAnime.value));
 const media = computed(() => {
-  const id = Number(route.params.id);
-  const found = mockStore.collections.find(item => item.id === id);
-  return found || mockStore.collections[0];
+  if (!realAnime.value) {
+    return {
+      id: String(route.params.id ?? ''),
+      title: '未找到馆藏条目',
+      meta: '',
+      year: '',
+      episodes: 0,
+      score: 0,
+      tags: ['本地库'],
+      desc: '请先在导入页扫描并确认本地媒体。',
+      image: '',
+      episodesList: [],
+    };
+  }
+
+  return {
+    id: realAnime.value.id,
+    title: realAnime.value.name_cn || realAnime.value.name || '未命名条目',
+    year: realAnime.value.air_year || (realAnime.value.date ? Number(realAnime.value.date.slice(0, 4)) : ''),
+    episodes: realAnime.value.total_episodes || realEpisodes.value.length,
+    score: realAnime.value.bangumi_score || realAnime.value.rating || 0,
+    tags: realAnime.value.tags || [],
+    desc: realAnime.value.summary || '暂无简介',
+    image: realAnime.value.cover || '',
+    episodesList: realEpisodes.value.map((ep) => ep.name_cn || ep.name || `第 ${ep.ep} 集`),
+  };
+});
+
+const episodeRows = computed(() => {
+  if (!hasRealData.value) return [];
+
+  return realEpisodes.value.map((ep) => ({
+    id: ep.id,
+    title: ep.name_cn || ep.name || `第 ${ep.ep} 集`,
+    ep: ep.ep,
+    progress: ep.watch_percentage || 0,
+  }));
 });
 const activeEpisodeIdx = ref(0);
 const rating = ref(0);
@@ -20,44 +72,256 @@ const isFavorited = ref(false);
 // Player State
 const isPlaying = ref(false);
 const currentTime = ref(0);
-const duration = ref(5400); // 1h 30m in seconds
+const duration = ref(0);
 const volume = ref(80);
 const isMuted = ref(false);
 const currentSourceIdx = ref(0);
-const sources = ['源 1', '源 2', '4K 高清'];
 const isSeeking = ref(false);
 const isSourcePickerOpen = ref(false);
 
-const togglePlay = () => isPlaying.value = !isPlaying.value;
-const toggleMute = () => isMuted.value = !isMuted.value;
+const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null);
+const currentFiles = computed(() => {
+  const ep = activeEpisode.value;
+  return ep ? filesByEpisode.value[ep.id] || [] : [];
+});
+const activeVideoFile = computed(() => currentFiles.value[currentSourceIdx.value] || null);
+const noteTargetId = computed(() => activeEpisode.value?.id ?? realAnime.value?.id ?? '');
+const noteTargetType = computed(() => (activeEpisode.value ? 'episode' : 'anime'));
+const sourceOptions = computed(() => {
+  if (!hasRealData.value) return ['暂无可播放文件'];
+  return currentFiles.value.length ? currentFiles.value.map((file) => file.name) : ['暂无可播放文件'];
+});
+const progressPercent = computed(() => {
+  if (!duration.value) return 0;
+  return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100));
+});
+
+const togglePlay = async () => {
+  playbackError.value = '';
+
+  if (!activeVideoFile.value) {
+    playbackError.value = hasRealData.value
+      ? '当前剧集没有关联本地视频文件。'
+      : '请先导入并确认真实馆藏数据。';
+    return;
+  }
+
+  const video = videoRef.value;
+  if (!video) return;
+
+  try {
+    if (video.paused) await video.play();
+    else video.pause();
+  } catch {
+    playbackError.value = 'Lite 暂不支持此视频格式、编码或浏览器拒绝播放。';
+  }
+};
+const toggleMute = () => {
+  isMuted.value = !isMuted.value;
+  if (videoRef.value) videoRef.value.muted = isMuted.value;
+};
 const toggleSourcePicker = () => isSourcePickerOpen.value = !isSourcePickerOpen.value;
 
 const formatTime = (seconds: number) => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
+  const safeSeconds = Number.isFinite(seconds) ? seconds : 0;
+  const h = Math.floor(safeSeconds / 3600);
+  const m = Math.floor((safeSeconds % 3600) / 60);
+  const s = Math.floor(safeSeconds % 60);
   return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
-const setEpisode = (index: number) => {
+const saveProgress = async () => {
+  if (!hasRealData.value || !realAnime.value || !activeEpisode.value) return;
+
+  const position = Math.max(0, Math.floor(currentTime.value));
+  const total = Math.max(0, Math.floor(duration.value));
+  const percentage = total > 0 ? Math.min(100, Math.round((position / total) * 100)) : 0;
+  const now = new Date();
+
+  await Promise.all([
+    episodeAPI.update(activeEpisode.value.id, {
+      duration_seconds: total || activeEpisode.value.duration_seconds,
+      watch_progress: position,
+      watch_percentage: percentage,
+      watched: percentage >= 90,
+      watched_at: percentage >= 90 ? now : activeEpisode.value.watched_at,
+    }),
+    animeAPI.update(realAnime.value.id, {
+      last_watched_episode: activeEpisode.value.ep,
+      last_watched_position: position,
+      last_watched_at: now,
+      status: 'watching',
+    }),
+  ]);
+
+  const idx = activeEpisodeIdx.value;
+  const ep = realEpisodes.value[idx];
+  if (ep) {
+    realEpisodes.value[idx] = {
+      ...ep,
+      duration_seconds: total || ep.duration_seconds,
+      watch_progress: position,
+      watch_percentage: percentage,
+      watched: percentage >= 90,
+      watched_at: percentage >= 90 ? now : ep.watched_at,
+      updated_at: now,
+    };
+  }
+  realAnime.value = {
+    ...realAnime.value,
+    last_watched_episode: activeEpisode.value.ep,
+    last_watched_position: position,
+    last_watched_at: now,
+    status: 'watching',
+    updated_at: now,
+  };
+};
+
+function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
+  const paragraphs: TipTapJSON[] = text
+    .split('\n')
+    .map((line) => ({
+      type: 'paragraph',
+      content: line ? [{ type: 'text', text: line }] : [],
+    }));
+
+  const images: TipTapJSON[] = attachmentIds.map((attachmentId) => ({
+    type: 'image',
+    attrs: { attachmentId },
+  }));
+
+  return {
+    type: 'doc',
+    content: [...paragraphs, ...images],
+  };
+}
+
+function plainTextFromTipTapJson(json: TipTapJSON): string {
+  const lines: string[] = [];
+  const walk = (node: TipTapJSON) => {
+    if (node.type === 'paragraph') {
+      lines.push((node.content ?? []).map((child) => child.text ?? '').join(''));
+      return;
+    }
+    for (const child of node.content ?? []) walk(child);
+  };
+  walk(json);
+  return lines.join('\n').trim();
+}
+
+async function loadNote() {
+  noteMessage.value = '';
+  noteId.value = null;
+  noteText.value = '';
+  noteAttachmentIds.value = [];
+  const targetId = noteTargetId.value;
+  if (!targetId) return;
+
+  const notes = await notesAPI.getByTarget(noteTargetType.value, targetId);
+  const note = notes[0];
+  if (!note) return;
+
+  noteId.value = note.id;
+  noteText.value = note.plainText || plainTextFromTipTapJson(note.tiptapJson);
+  noteAttachmentIds.value = [...note.attachmentIds];
+}
+
+async function saveNote(message = '笔记已保存') {
+  const targetId = noteTargetId.value;
+  if (!targetId) return;
+
+  noteId.value = await notesAPI.save({
+    id: noteId.value ?? undefined,
+    targetType: noteTargetType.value,
+    targetId,
+    tiptapJson: textToTipTapJson(noteText.value, noteAttachmentIds.value),
+    plainText: noteText.value,
+    attachmentIds: noteAttachmentIds.value,
+  });
+  noteMessage.value = message;
+}
+
+function insertTimestampNote() {
+  const seconds = Math.max(0, Math.floor(currentTime.value));
+  const label = `[${formatTime(seconds)}]`;
+  noteText.value = noteText.value ? `${noteText.value}\n${label} ` : `${label} `;
+}
+
+async function captureScreenshotNote() {
+  const video = videoRef.value;
+  if (!video || !video.videoWidth || !video.videoHeight) {
+    noteMessage.value = '当前没有可截图的视频画面';
+    return;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.drawImage(video, 0, 0);
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', 0.85);
+  });
+  if (!blob) {
+    noteMessage.value = '截图生成失败';
+    return;
+  }
+
+  await saveNote('笔记已保存，正在添加截图...');
+  if (!noteId.value) return;
+
+  const attachmentId = await attachmentAPI.put({
+    noteId: noteId.value,
+    name: `screenshot-${Date.now()}.jpg`,
+    mimeType: 'image/jpeg',
+    blob,
+  });
+  noteAttachmentIds.value = [...noteAttachmentIds.value, attachmentId];
+  await saveNote('截图已加入笔记');
+}
+
+let lastProgressSaveAt = 0;
+const saveProgressThrottled = () => {
+  const now = Date.now();
+  if (now - lastProgressSaveAt < 5000) return;
+  lastProgressSaveAt = now;
+  void saveProgress();
+};
+
+const setEpisode = async (index: number) => {
+  await saveProgress();
+  await saveNote('笔记已自动保存');
   activeEpisodeIdx.value = index;
-  currentTime.value = 0;
-  isPlaying.value = true;
+  if (!hasRealData.value) {
+    currentTime.value = 0;
+    duration.value = 0;
+    isPlaying.value = false;
+    return;
+  }
+  currentTime.value = realEpisodes.value[index]?.watch_progress || 0;
+  duration.value = realEpisodes.value[index]?.duration_seconds || 0;
+  currentSourceIdx.value = 0;
+  isPlaying.value = false;
+  playbackError.value = '';
+  await loadNote();
 };
 
 const prevEpisode = () => {
-  if (activeEpisodeIdx.value > 0) setEpisode(activeEpisodeIdx.value - 1);
+  if (activeEpisodeIdx.value > 0) void setEpisode(activeEpisodeIdx.value - 1);
 };
 
 const nextEpisode = () => {
-  if (activeEpisodeIdx.value < media.value.episodesList.length - 1) {
-    setEpisode(activeEpisodeIdx.value + 1);
+  if (activeEpisodeIdx.value < episodeRows.value.length - 1) {
+    void setEpisode(activeEpisodeIdx.value + 1);
   }
 };
 
 const onProgressInput = (e: Event) => {
-  const val = (e.target as HTMLInputElement).value;
-  currentTime.value = parseInt(val);
+  const val = Number((e.target as HTMLInputElement).value);
+  currentTime.value = val;
+  if (videoRef.value) videoRef.value.currentTime = val;
 };
 
 const onProgressMouseDown = () => {
@@ -66,6 +330,7 @@ const onProgressMouseDown = () => {
 
 const onProgressMouseUp = () => {
   isSeeking.value = false;
+  void saveProgress();
 };
 
 const toggleFullscreen = () => {
@@ -73,25 +338,133 @@ const toggleFullscreen = () => {
   if (!document.fullscreenElement) {
     el?.requestFullscreen().catch(err => console.error(err));
   } else {
-    document.exitFullscreen();
+    void document.exitFullscreen();
   }
 };
 
-// Mock progress timer
-let timer: any;
-onMounted(() => {
-  timer = setInterval(() => {
-    if (isPlaying.value && !isSeeking.value && currentTime.value < duration.value) {
-      currentTime.value += 1;
+const loadPlaybackUrl = async () => {
+  revokePlaybackUrl(videoUrl.value);
+  videoUrl.value = '';
+  playbackError.value = '';
+  isPlaying.value = false;
+
+  const file = activeVideoFile.value;
+  if (!file) return;
+
+  try {
+    videoUrl.value = await createPlaybackUrl(file);
+  } catch (error) {
+    playbackError.value = error instanceof Error ? error.message : String(error);
+  }
+};
+
+const loadTheatreData = async () => {
+  isLoading.value = true;
+  playbackError.value = '';
+  revokePlaybackUrl(videoUrl.value);
+  videoUrl.value = '';
+
+  try {
+    const animeId = String(route.params.id || '');
+    const anime = await animeAPI.getById(animeId);
+
+    if (!anime) {
+      realAnime.value = null;
+      realEpisodes.value = [];
+      filesByEpisode.value = {};
+      activeEpisodeIdx.value = 0;
+      currentTime.value = 0;
+      duration.value = 0;
+      return;
     }
-  }, 1000);
+
+    const episodes = (await episodeAPI.getByAnimeId(anime.id)).sort(
+      (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
+    );
+    const fileIds = [...new Set(episodes.flatMap((ep) => ep.file_ids || []))];
+    const files = fileIds.length ? await fileAPI.getByIds(fileIds) : [];
+    const filesById = new Map(files.map((file) => [file.id, file]));
+
+    realAnime.value = anime;
+    realEpisodes.value = episodes;
+    filesByEpisode.value = Object.fromEntries(
+      episodes.map((ep) => [
+        ep.id,
+        (ep.file_ids || []).map((id) => filesById.get(id)).filter(Boolean) as VideoFile[],
+      ]),
+    );
+
+    const resumeIdx = episodes.findIndex((ep) => ep.ep === anime.last_watched_episode);
+    activeEpisodeIdx.value = Math.max(0, resumeIdx);
+    currentSourceIdx.value = 0;
+    currentTime.value =
+      episodes[activeEpisodeIdx.value]?.watch_progress ||
+      anime.last_watched_position ||
+      0;
+    duration.value = episodes[activeEpisodeIdx.value]?.duration_seconds || 0;
+    await loadNote();
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+const onLoadedMetadata = () => {
+  const video = videoRef.value;
+  if (!video) return;
+
+  duration.value = Number.isFinite(video.duration) ? video.duration : 0;
+  const resumeAt = currentTime.value;
+  if (resumeAt > 0 && resumeAt < duration.value) video.currentTime = resumeAt;
+  video.volume = volume.value / 100;
+  video.muted = isMuted.value;
+};
+
+const onTimeUpdate = () => {
+  const video = videoRef.value;
+  if (!video || isSeeking.value) return;
+
+  currentTime.value = video.currentTime;
+  if (Number.isFinite(video.duration)) duration.value = video.duration;
+  saveProgressThrottled();
+};
+
+const onPlay = () => {
+  isPlaying.value = true;
+};
+
+const onPause = () => {
+  isPlaying.value = false;
+  void saveProgress();
+};
+
+const onVideoError = () => {
+  isPlaying.value = false;
+  playbackError.value = 'Lite 暂不支持此视频格式或编码。若文件为 MKV/H.265，请使用浏览器支持的 MP4/H.264 或 WebM。';
+};
+
+onMounted(() => {
+  void loadTheatreData();
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  void saveProgress();
+  void saveNote('笔记已自动保存');
+  revokePlaybackUrl(videoUrl.value);
+});
 
 watch(() => route.params.id, () => {
-  activeEpisodeIdx.value = 0;
-  currentTime.value = 0;
-  isPlaying.value = false;
+  void loadTheatreData();
+});
+
+watch([activeVideoFile, activeEpisodeIdx], () => {
+  void loadPlaybackUrl();
+});
+
+watch(noteTargetId, () => {
+  void loadNote();
+});
+
+watch(volume, (value) => {
+  if (videoRef.value) videoRef.value.volume = value / 100;
 });
 </script>
 
@@ -101,8 +474,24 @@ watch(() => route.params.id, () => {
       <!-- Video Player Section -->
       <section class="player-section">
         <div class="video-container group">
-          <img :src="media.image" :alt="media.title" class="video-placeholder" />
+          <video
+            v-if="videoUrl"
+            ref="videoRef"
+            :src="videoUrl"
+            class="video-player"
+            playsinline
+            @loadedmetadata="onLoadedMetadata"
+            @timeupdate="onTimeUpdate"
+            @play="onPlay"
+            @pause="onPause"
+            @ended="onPause"
+            @error="onVideoError"
+          ></video>
+          <img v-else-if="media.image" :src="media.image" :alt="media.title" class="video-placeholder" />
+          <div v-else class="video-empty">暂无视频预览</div>
           <div class="video-overlay" @click="togglePlay"></div>
+          <div v-if="playbackError" class="playback-error">{{ playbackError }}</div>
+          <div v-else-if="isLoading" class="playback-status">加载中...</div>
           
           <!-- Play Button Overlay -->
           <button v-if="!isPlaying" class="master-play-btn-circular" @click="togglePlay">
@@ -113,11 +502,11 @@ watch(() => route.params.id, () => {
           <div class="video-controls">
             <div class="controls-top">
               <div class="progress-container">
-                <input 
-                  type="range" 
-                  min="0" 
-                  :max="duration" 
-                  :value="currentTime" 
+                <input
+                  type="range"
+                  min="0"
+                  :max="Math.max(duration, 1)"
+                  :value="currentTime"
                   @input="onProgressInput"
                   @mousedown="onProgressMouseDown"
                   @mouseup="onProgressMouseUp"
@@ -126,7 +515,7 @@ watch(() => route.params.id, () => {
                   class="progress-slider"
                 />
                 <div class="progress-bar-bg">
-                  <div class="progress-fill" :style="{ width: (currentTime / duration) * 100 + '%' }"></div>
+                  <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
                 </div>
               </div>
             </div>
@@ -148,8 +537,8 @@ watch(() => route.params.id, () => {
                 <button 
                   class="control-icon" 
                   @click="nextEpisode"
-                  :disabled="activeEpisodeIdx === media.episodesList.length - 1"
-                  :class="{ disabled: activeEpisodeIdx === media.episodesList.length - 1 }"
+                  :disabled="activeEpisodeIdx === episodeRows.length - 1"
+                  :class="{ disabled: activeEpisodeIdx === episodeRows.length - 1 }"
                 >
                   <SkipForward :size="20" fill="currentColor" />
                 </button>
@@ -159,12 +548,12 @@ watch(() => route.params.id, () => {
               <div class="controls-right">
                 <div class="source-wrapper">
                   <button class="source-picker" @click="toggleSourcePicker">
-                    <span>{{ sources[currentSourceIdx] }}</span>
+                    <span>{{ sourceOptions[currentSourceIdx] }}</span>
                     <ChevronDown :size="14" />
                   </button>
                   <div v-if="isSourcePickerOpen" class="source-dropdown">
-                    <button 
-                      v-for="(source, idx) in sources" 
+                    <button
+                      v-for="(source, idx) in sourceOptions"
                       :key="idx"
                       @click="currentSourceIdx = idx; isSourcePickerOpen = false"
                       :class="{ active: currentSourceIdx === idx }"
@@ -253,20 +642,41 @@ watch(() => route.params.id, () => {
           </div>
 
           <p class="media-desc">{{ media.desc }}</p>
+
+          <section class="notes-panel">
+            <header class="notes-header">
+              <h3>剧集笔记</h3>
+              <div class="notes-actions">
+                <button class="note-tool" @click="insertTimestampNote">时间戳</button>
+                <button class="note-tool" @click="captureScreenshotNote">截图</button>
+                <button class="note-save" @click="saveNote()">保存</button>
+              </div>
+            </header>
+            <textarea
+              v-model="noteText"
+              class="note-editor"
+              placeholder="记录这集的分镜、台词、感想..."
+            ></textarea>
+            <footer class="notes-footer">
+              <span v-if="noteAttachmentIds.length">附件 {{ noteAttachmentIds.length }} 个</span>
+              <span v-if="noteMessage">{{ noteMessage }}</span>
+            </footer>
+          </section>
         </div>
 
         <!-- Episodes List -->
         <aside class="episodes-panel">
           <h3 class="panel-title">选集</h3>
           <div class="episodes-list">
-            <button 
-              v-for="(ep, index) in media.episodesList" 
-              :key="index"
+            <button
+              v-for="(ep, index) in episodeRows"
+              :key="ep.id"
               class="episode-item"
               :class="{ active: activeEpisodeIdx === index }"
-              @click="setEpisode(index)"
+              @click="void setEpisode(index)"
             >
-              <span class="ep-title">{{ ep }}</span>
+              <span class="ep-title">{{ ep.title }}</span>
+              <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
               <PlayCircle v-if="activeEpisodeIdx === index" :size="16" class="active-dot-icon" />
             </button>
           </div>
@@ -307,6 +717,43 @@ watch(() => route.params.id, () => {
   height: 100%;
   object-fit: cover;
   opacity: 0.6;
+}
+
+.video-player {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+}
+
+.video-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+}
+
+.playback-error,
+.playback-status {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 24px;
+  z-index: 25;
+  padding: 12px 14px;
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  line-height: 1.5;
+  background: rgba(30, 30, 30, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.playback-error {
+  background: rgba(128, 24, 24, 0.78);
 }
 
 .video-overlay {
@@ -717,6 +1164,74 @@ watch(() => route.params.id, () => {
   color: var(--on-surface-variant);
 }
 
+.notes-panel {
+  margin-top: 32px;
+  border-top: 1px solid var(--outline-variant);
+  padding-top: 24px;
+}
+
+.notes-header,
+.notes-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.notes-header h3 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.notes-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-tool,
+.note-save {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.note-tool {
+  color: var(--primary);
+  background-color: var(--surface-low);
+}
+
+.note-save {
+  color: white;
+  background-color: var(--primary);
+}
+
+.note-editor {
+  width: 100%;
+  min-height: 180px;
+  margin-top: 16px;
+  padding: 16px;
+  resize: vertical;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  line-height: 1.6;
+  outline: none;
+}
+
+.note-editor:focus {
+  border-color: var(--primary);
+}
+
+.notes-footer {
+  min-height: 24px;
+  margin-top: 8px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
 /* Episodes Panel */
 .episodes-panel {
   background-color: var(--surface);
@@ -772,6 +1287,13 @@ watch(() => route.params.id, () => {
 
 .ep-title {
   flex: 1;
+}
+
+.ep-progress {
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  opacity: 0.7;
 }
 
 /* Range input overrides */

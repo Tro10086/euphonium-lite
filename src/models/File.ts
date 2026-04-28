@@ -1,6 +1,8 @@
 export interface VideoFile {
   id: string // UUID
+  root_id?: string
   ep_id?: string
+  anime_id?: string
   name: string // 文件名
   path: string // 相对授权目录的路径
   parent_path?: string // 父目录相对路径
@@ -8,6 +10,9 @@ export interface VideoFile {
   size: number // 文件大小（字节）
   modified: number // 最后修改时间戳
   quickHash: string // 采样哈希
+  fullHash?: string
+  scan_state?: 'active' | 'missing' | 'ignored'
+  last_seen_at?: number
   lastScan: number
 }
 

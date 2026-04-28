@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { mockStore } from '@/ui/stores/mockData';
-import { Palette, Code, Database, Lightbulb, Moon, Settings2, Check, Download, Upload, RotateCw, Play, Edit2 } from 'lucide-vue-next';
+import { uiState } from '@/ui/stores/uiState';
+import { Palette, Code, Database, Lightbulb, Moon, Settings2, Check, Download, Upload, RotateCw, Play, Edit2, Trash2 } from 'lucide-vue-next';
 import BaseButton from '@/ui/components/BaseButton.vue';
+import { debugAPI } from '@/services/storage';
+import { downloadBackupJson, formatImportResult, importBackupJsonFile, reloadAfterImport } from '@/ui/utils/backupTransfer';
+import { parseDetailedVideoFileName } from '@/utils/fileNameParser';
 
 const testInput = ref('');
 const testResult = ref<any>(null);
 const isTesting = ref(false);
 const showTestError = ref(false);
+const dataMessage = ref('');
+const dataError = ref('');
+const debugMessage = ref('');
+const debugError = ref('');
+const isClearingDebugData = ref(false);
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
@@ -16,31 +24,51 @@ const handleImportFile = () => {
   fileInputRef.value?.click();
 };
 
-const onFileChange = (event: Event) => {
+const onFileChange = async (event: Event) => {
   const target = event.target as HTMLInputElement;
   if (target.files && target.files.length > 0) {
     const file = target.files[0];
-    console.log('Selected file for import:', file.name);
-    // TODO: Implement actual JSON parsing and data recovery logic here
-    alert(`已选择文件: ${file.name}\n(实际的 JSON 解析和数据恢复逻辑将在此处执行)`);
+    if (!file) return;
+    dataMessage.value = '';
+    dataError.value = '';
+    try {
+      const result = await importBackupJsonFile(file);
+      dataMessage.value = `${formatImportResult(result)}，即将刷新应用`;
+      reloadAfterImport();
+    } catch (error) {
+      dataError.value = error instanceof Error ? error.message : String(error);
+    } finally {
+      target.value = '';
+    }
   }
 };
 
-const handleExportBackup = () => {
-  console.log('Exporting backup...');
-  // TODO: Implement actual data serialization and download logic here
-  const mockData = JSON.stringify(mockStore.settings, null, 2);
-  const blob = new Blob([mockData], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'euphonium_backup.json';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  
-  alert('导出备份指令已发送。\n(实际的馆藏元数据序列化逻辑将在此处执行)');
+const handleExportBackup = async () => {
+  dataMessage.value = '';
+  dataError.value = '';
+  try {
+    await downloadBackupJson();
+    dataMessage.value = '已导出真实馆藏 JSON 备份';
+  } catch (error) {
+    dataError.value = error instanceof Error ? error.message : String(error);
+  }
+};
+
+const clearIndexedDB = async () => {
+  if (!window.confirm('确定要清空本机 IndexedDB 数据吗？此操作会删除馆藏、扫描记录、匹配记录和笔记附件。')) return;
+
+  debugMessage.value = '';
+  debugError.value = '';
+  isClearingDebugData.value = true;
+
+  try {
+    await debugAPI.clearAll();
+    debugMessage.value = 'IndexedDB 已清空，即将重新加载应用...';
+    window.setTimeout(() => window.location.reload(), 1200);
+  } catch (error) {
+    debugError.value = error instanceof Error ? error.message : String(error);
+    isClearingDebugData.value = false;
+  }
 };
 
 const runTest = () => {
@@ -51,19 +79,24 @@ const runTest = () => {
   }
   
   showTestError.value = false;
-  try {
-    // Simple regex test simulation
-    const regex = new RegExp(mockStore.settings.customRegex || mockStore.settings.defaultRegex);
-    const match = testInput.value.match(regex);
-    
-    if (match) {
-      testResult.value = match.groups || { matched: match[0] };
-    } else {
-      testResult.value = { error: '未匹配到任何内容' };
-    }
-  } catch (err: any) {
-    testResult.value = { error: '正则表达式语法错误: ' + err.message };
-  }
+  const parsed = parseDetailedVideoFileName(testInput.value);
+  testResult.value = {
+    title: parsed.title,
+    season: parsed.season,
+    episode: parsed.episode || null,
+    episodeEnd: parsed.episodeEnd ?? null,
+    confidence: parsed.confidence,
+    titleCandidates: parsed.titleCandidates,
+    releaseGroup: parsed.releaseGroup ?? null,
+    resolution: parsed.resolution ?? null,
+    videoCodec: parsed.videoCodec ?? null,
+    audioCodec: parsed.audioCodec ?? null,
+    source: parsed.source ?? null,
+    subLanguages: parsed.subLanguages,
+    extraTags: parsed.extraTags,
+    isSpecial: parsed.isSpecial,
+    warnings: parsed.warnings,
+  };
 };
 </script>
 
@@ -93,6 +126,10 @@ const runTest = () => {
           <Database :size="20" />
           <span>数据管理</span>
         </a>
+        <a href="#debug" class="nav-btn">
+          <Trash2 :size="20" />
+          <span>开发工具</span>
+        </a>
       </nav>
 
       <!-- Content -->
@@ -109,24 +146,24 @@ const runTest = () => {
               <div class="segmented-control">
                 <button 
                   class="segment" 
-                  :class="{ active: mockStore.settings.theme === 'light' }"
-                  @click="mockStore.settings.theme = 'light'"
+                  :class="{ active: uiState.settings.theme === 'light' }"
+                  @click="uiState.settings.theme = 'light'"
                 >
                   <Lightbulb :size="18" />
                   <span>白金</span>
                 </button>
                 <button 
                   class="segment" 
-                  :class="{ active: mockStore.settings.theme === 'dark' }"
-                  @click="mockStore.settings.theme = 'dark'"
+                  :class="{ active: uiState.settings.theme === 'dark' }"
+                  @click="uiState.settings.theme = 'dark'"
                 >
                   <Moon :size="18" />
                   <span>黑曜</span>
                 </button>
                 <button 
                   class="segment" 
-                  :class="{ active: mockStore.settings.theme === 'system' }"
-                  @click="mockStore.settings.theme = 'system'"
+                  :class="{ active: uiState.settings.theme === 'system' }"
+                  @click="uiState.settings.theme = 'system'"
                 >
                   <Settings2 :size="18" />
                   <span>跟随系统</span>
@@ -141,8 +178,8 @@ const runTest = () => {
               </div>
               <div 
                 class="toggle" 
-                :class="{ active: mockStore.settings.compactMode }"
-                @click="mockStore.settings.compactMode = !mockStore.settings.compactMode"
+                :class="{ active: uiState.settings.compactMode }"
+                @click="uiState.settings.compactMode = !uiState.settings.compactMode"
               >
                 <div class="toggle-thumb"></div>
               </div>
@@ -162,16 +199,16 @@ const runTest = () => {
             <div class="input-group">
               <label class="label-heading">默认解析规则 (预设)</label>
               <div class="readonly-input">
-                <code>{{ mockStore.settings.defaultRegex }}</code>
+                <code>{{ uiState.settings.defaultRegex }}</code>
               </div>
             </div>
 
             <div class="input-group">
               <label class="label-heading">自定义正则表达式</label>
               <div class="input-wrapper">
-                <input 
-                  type="text" 
-                  v-model="mockStore.settings.customRegex" 
+                <input
+                  type="text"
+                  v-model="uiState.settings.customRegex"
                   placeholder="输入正则表达式..." 
                   class="text-input"
                 />
@@ -248,7 +285,7 @@ const runTest = () => {
             <div class="action-row">
               <div class="row-info">
                 <h3>导入数据</h3>
-                <p>从之前的备份文件中恢复您的馆藏数据。此操作将覆盖当前设置。</p>
+                <p>从之前的备份文件中恢复馆藏数据；同 ID 数据会被备份内容覆盖。</p>
               </div>
               <BaseButton variant="secondary" @click="handleImportFile">
                 <template #icon><Upload :size="16" /></template>
@@ -256,18 +293,43 @@ const runTest = () => {
               </BaseButton>
             </div>
 
+            <p v-if="dataMessage" class="data-message">{{ dataMessage }}</p>
+            <p v-if="dataError" class="data-error">{{ dataError }}</p>
+
             <div class="divider"></div>
 
             <div class="action-row">
               <div class="row-info">
                 <h3 class="text-error">清除缓存</h3>
-                <p>释放由缩略图和临时预览文件占用的本地存储空间 (约 {{ mockStore.settings.cacheSize }})。</p>
+                <p>释放由缩略图和临时预览文件占用的本地存储空间 (约 {{ uiState.settings.cacheSize }})。</p>
               </div>
               <button class="btn-error-ghost sm">
                 <RotateCw :size="16" />
                 <span>立即清理</span>
               </button>
             </div>
+          </div>
+        </section>
+
+        <!-- Debug Tools -->
+        <section id="debug" class="settings-section">
+          <h2 class="section-title">
+            <Trash2 :size="24" class="icon-primary" />
+            开发工具
+          </h2>
+          <div class="card debug-card">
+            <div class="action-row">
+              <div class="row-info">
+                <h3 class="text-error">清空 IndexedDB</h3>
+                <p>删除主库 EuphoniumLite；如果本机存在 EuphoniumLiteNotes，也会一起删除。完成后自动重新加载。</p>
+              </div>
+              <button class="btn-error-ghost sm" :disabled="isClearingDebugData" @click="clearIndexedDB">
+                <Trash2 :size="16" />
+                <span>{{ isClearingDebugData ? '正在清空' : '清空 IndexedDB' }}</span>
+              </button>
+            </div>
+            <p v-if="debugMessage" class="data-message">{{ debugMessage }}</p>
+            <p v-if="debugError" class="data-error">{{ debugError }}</p>
           </div>
         </section>
       </div>
@@ -633,6 +695,18 @@ const runTest = () => {
   color: var(--error);
 }
 
+.data-message {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.data-error {
+  color: var(--error);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
 .btn-error-ghost {
   color: var(--error);
   font-weight: 600;
@@ -646,5 +720,10 @@ const runTest = () => {
 
 .btn-error-ghost:hover {
   background-color: var(--error-container);
+}
+
+.btn-error-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 </style>

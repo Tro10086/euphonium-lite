@@ -1,38 +1,85 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { mockStore } from '@/ui/stores/mockData';
-import { Filter, ArrowUpDown, Play } from 'lucide-vue-next';
+import { type CollectionItem, uiState } from '@/ui/stores/uiState';
+import { ArrowUpDown, CheckSquare, Filter, Play, RotateCcw, Square, Trash2 } from 'lucide-vue-next';
+import { animeAPI } from '@/services/storage';
+import type { Anime } from '@/models/Anime';
 const router = useRouter();
 
 const years = ['all', '2024', '2023', '2022', '2021'];
 const genres = ['all', '治愈', '奇幻', '艺术', '极简', '实验', '悬疑', '科幻', '青春'];
+const animes = ref<Anime[]>([]);
+const selectedTrashIds = ref<Set<string>>(new Set());
+const emptyText = computed(() => (uiState.homeFilter === 'trash' ? '回收站为空' : '暂无真实馆藏数据'));
+const isTrashView = computed(() => uiState.homeFilter === 'trash');
+const selectedTrashCount = computed(() => selectedTrashIds.value.size);
+const allTrashSelected = computed(() =>
+  isTrashView.value && filteredCollections.value.length > 0 && filteredCollections.value.every((item) => selectedTrashIds.value.has(String(item.id))),
+);
+
+const asDate = (value: Date | string | number | null | undefined) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const recentAnimeIds = computed(() =>
+  [...animes.value]
+    .filter((anime) => !anime.deleted_at)
+    .sort((a: Anime, b: Anime) => {
+      const bTime = asDate(b.last_watched_at)?.getTime() ?? asDate(b.updated_at)?.getTime() ?? 0;
+      const aTime = asDate(a.last_watched_at)?.getTime() ?? asDate(a.updated_at)?.getTime() ?? 0;
+      return bTime - aTime;
+    })
+    .slice(0, 12)
+    .map((anime) => anime.id),
+);
+
+const libraryCollections = computed<CollectionItem[]>(() => {
+  return animes.value.map((anime) => ({
+    id: anime.id,
+    title: anime.name_cn || anime.name || '未命名番剧',
+    meta: `${anime.date?.slice(0, 4) || '未知'} · ${anime.status}`,
+    year: Number(anime.date?.slice(0, 4)) || 0,
+    episodes: anime.total_episodes,
+    score: anime.bangumi_score || anime.rating || 0,
+    tags: anime.tags.length ? anime.tags : ['本地'],
+    desc: anime.summary || '暂无简介',
+    image: anime.cover || 'https://picsum.photos/seed/euphonium-local/800/1200',
+    episodesList: Array.from({ length: anime.total_episodes || 1 }, (_, index) => `第 ${index + 1} 集`),
+    deletedAt: asDate(anime.deleted_at),
+    purgeRequestedAt: asDate(anime.purge_requested_at),
+    isFavorite: Boolean(anime.is_favorite),
+  }));
+});
 
 const filteredCollections = computed(() => {
-  let list = [...mockStore.collections];
+  let list = libraryCollections.value.filter((item) =>
+    uiState.homeFilter === 'trash'
+      ? Boolean(item.deletedAt) && !item.purgeRequestedAt
+      : !item.deletedAt && !item.purgeRequestedAt,
+  );
 
-  // Sidebar Filter (existing logic)
-  if (mockStore.homeFilter === 'fav') {
-    list = list.filter(c => c.score > 9.5);
-  } else if (mockStore.homeFilter === 'recent') {
-    list = list.filter(c => c.year === 2024);
-  } else if (mockStore.homeFilter === 'trash') {
-    return [];
+  if (uiState.homeFilter === 'fav') {
+    list = list.filter(c => c.isFavorite);
+  } else if (uiState.homeFilter === 'recent') {
+    list = list.filter(c => recentAnimeIds.value.includes(String(c.id)));
   }
 
   // Active Year Filter
-  if (mockStore.activeYear !== 'all') {
-    list = list.filter(c => c.year === parseInt(mockStore.activeYear));
+  if (uiState.activeYear !== 'all') {
+    list = list.filter(c => c.year === parseInt(uiState.activeYear));
   }
 
   // Active Genre Filter
-  if (mockStore.activeGenre !== 'all') {
-    list = list.filter(c => c.tags.includes(mockStore.activeGenre));
+  if (uiState.activeGenre !== 'all') {
+    list = list.filter(c => c.tags.includes(uiState.activeGenre));
   }
 
   // Search Filter
-  if (mockStore.searchQuery) {
-    const query = mockStore.searchQuery.toLowerCase();
+  if (uiState.searchQuery) {
+    const query = uiState.searchQuery.toLowerCase();
     list = list.filter(c => 
       c.title.toLowerCase().includes(query) || 
       c.tags.some(tag => tag.toLowerCase().includes(query))
@@ -40,33 +87,137 @@ const filteredCollections = computed(() => {
   }
 
   // Sorting
-  if (mockStore.sortOrder === 'newest') {
-    list.sort((a, b) => b.year - a.year || b.id - a.id);
+  if (uiState.sortOrder === 'newest') {
+    list.sort((a, b) => b.year - a.year || String(b.id).localeCompare(String(a.id)));
   } else {
-    list.sort((a, b) => a.year - b.year || a.id - b.id);
+    list.sort((a, b) => a.year - b.year || String(a.id).localeCompare(String(b.id)));
   }
 
   return list;
 });
 
 const toggleSort = () => {
-  mockStore.sortOrder = mockStore.sortOrder === 'newest' ? 'oldest' : 'newest';
+  uiState.sortOrder = uiState.sortOrder === 'newest' ? 'oldest' : 'newest';
 };
 
 const enterTheatre = (item: any) => {
-  mockStore.selectedMedia = null;
+  uiState.selectedMedia = null;
   router.push({ name: 'theatre', params: { id: item.id } });
 };
+
+const setTrashSelection = (ids: string[]) => {
+  selectedTrashIds.value = new Set(ids);
+};
+
+const toggleTrashSelection = (item: CollectionItem) => {
+  const next = new Set(selectedTrashIds.value);
+  const id = String(item.id);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedTrashIds.value = next;
+};
+
+const handleCardClick = (item: CollectionItem) => {
+  if (isTrashView.value) {
+    toggleTrashSelection(item);
+    return;
+  }
+  uiState.selectedMedia = item;
+};
+
+const refreshAnimes = async () => {
+  animes.value = await animeAPI.getAll();
+};
+
+const moveToTrash = async (item: CollectionItem) => {
+  await animeAPI.moveToTrash(String(item.id));
+  if (uiState.selectedMedia?.id === item.id) uiState.selectedMedia = null;
+  await refreshAnimes();
+};
+
+const restoreFromTrash = async (item: CollectionItem) => {
+  await animeAPI.restoreFromTrash(String(item.id));
+  if (uiState.selectedMedia?.id === item.id) uiState.selectedMedia = null;
+  selectedTrashIds.value.delete(String(item.id));
+  selectedTrashIds.value = new Set(selectedTrashIds.value);
+  await refreshAnimes();
+};
+
+const markTrashDeleted = async (item: CollectionItem) => {
+  const ok = window.confirm(`确定要从回收站移除「${item.title}」吗？数据仍会以软删除状态保留在 IndexedDB。`);
+  if (!ok) return;
+
+  await animeAPI.markTrashDeleted(String(item.id));
+  if (uiState.selectedMedia?.id === item.id) uiState.selectedMedia = null;
+  selectedTrashIds.value.delete(String(item.id));
+  selectedTrashIds.value = new Set(selectedTrashIds.value);
+  await refreshAnimes();
+};
+
+const toggleSelectAllTrash = () => {
+  if (allTrashSelected.value) {
+    setTrashSelection([]);
+    return;
+  }
+  setTrashSelection(filteredCollections.value.map((item) => String(item.id)));
+};
+
+const restoreSelectedTrash = async () => {
+  const ids = Array.from(selectedTrashIds.value);
+  if (ids.length === 0) return;
+
+  await Promise.all(ids.map((id) => animeAPI.restoreFromTrash(id)));
+  setTrashSelection([]);
+  await refreshAnimes();
+};
+
+const markSelectedTrashDeleted = async () => {
+  const ids = Array.from(selectedTrashIds.value);
+  if (ids.length === 0) return;
+
+  const ok = window.confirm(`确定要从回收站移除选中的 ${ids.length} 个条目吗？数据仍会以软删除状态保留在 IndexedDB。`);
+  if (!ok) return;
+
+  await animeAPI.markTrashDeletedBulk(ids);
+  setTrashSelection([]);
+  if (uiState.selectedMedia && ids.includes(String(uiState.selectedMedia.id))) uiState.selectedMedia = null;
+  await refreshAnimes();
+};
+
+watch(() => uiState.homeFilter, () => {
+  setTrashSelection([]);
+});
+
+onMounted(async () => {
+  await animeAPI.purgeExpiredTrash();
+  await refreshAnimes();
+});
 </script>
 
 <template>
   <div class="home-view">
     <header class="page-header">
       <div class="header-actions">
+        <template v-if="isTrashView">
+          <span class="selection-summary">已选 {{ selectedTrashCount }}</span>
+          <button class="tool-btn" @click="toggleSelectAllTrash">
+            <CheckSquare v-if="allTrashSelected" :size="16" />
+            <Square v-else :size="16" />
+            <span>{{ allTrashSelected ? '取消全选' : '全选' }}</span>
+          </button>
+          <button class="tool-btn" :disabled="selectedTrashCount === 0" @click="restoreSelectedTrash">
+            <RotateCcw :size="16" />
+            <span>复原</span>
+          </button>
+          <button class="tool-btn danger" :disabled="selectedTrashCount === 0" @click="markSelectedTrashDeleted">
+            <Trash2 :size="16" />
+            <span>删除</span>
+          </button>
+        </template>
         <button 
           class="tool-btn" 
-          :class="{ active: mockStore.isFilterBarOpen }"
-          @click="mockStore.isFilterBarOpen = !mockStore.isFilterBarOpen"
+          :class="{ active: uiState.isFilterBarOpen }"
+          @click="uiState.isFilterBarOpen = !uiState.isFilterBarOpen"
         >
           <Filter :size="16" />
           <span>筛选</span>
@@ -80,7 +231,7 @@ const enterTheatre = (item: any) => {
 
     <!-- Filter Bar -->
     <Transition name="slide-down">
-      <div v-if="mockStore.isFilterBarOpen" class="filter-bar">
+      <div v-if="uiState.isFilterBarOpen" class="filter-bar">
         <div class="filter-group">
           <span class="filter-label">年份</span>
           <div class="filter-options">
@@ -88,8 +239,8 @@ const enterTheatre = (item: any) => {
               v-for="year in years" 
               :key="year"
               class="option-btn"
-              :class="{ active: mockStore.activeYear === year }"
-              @click="mockStore.activeYear = year"
+              :class="{ active: uiState.activeYear === year }"
+              @click="uiState.activeYear = year"
             >
               {{ year === 'all' ? '全部' : year }}
             </button>
@@ -102,8 +253,8 @@ const enterTheatre = (item: any) => {
               v-for="genre in genres" 
               :key="genre"
               class="option-btn"
-              :class="{ active: mockStore.activeGenre === genre }"
-              @click="mockStore.activeGenre = genre"
+              :class="{ active: uiState.activeGenre === genre }"
+              @click="uiState.activeGenre = genre"
             >
               {{ genre === 'all' ? '全部' : genre }}
             </button>
@@ -117,16 +268,30 @@ const enterTheatre = (item: any) => {
         v-for="item in filteredCollections" 
         :key="item.id"
         class="bento-item"
-        @click="mockStore.selectedMedia = item"
+        :class="{ selected: isTrashView && selectedTrashIds.has(String(item.id)) }"
+        @click="handleCardClick(item)"
       >
         <div class="card-image-wrap">
           <img :src="item.image" :alt="item.title" class="item-img" />
-          
-          <!-- Persistent Title (Inside Card) -->
-          <div 
-            v-if="!mockStore.settings.compactMode" 
-            class="persistent-label"
+          <button
+            v-if="uiState.homeFilter !== 'trash'"
+            class="card-action-btn delete-card-btn"
+            title="移入回收站"
+            @click.stop="moveToTrash(item)"
           >
+            <Trash2 :size="16" />
+          </button>
+          <button
+            v-else
+            class="card-action-btn delete-card-btn"
+            title="从回收站移除"
+            @click.stop="markTrashDeleted(item)"
+          >
+            <Trash2 :size="16" />
+          </button>
+
+          <!-- Persistent Title (Inside Card) -->
+          <div class="persistent-label">
             <h3 class="label-title">{{ item.title }}</h3>
           </div>
 
@@ -142,16 +307,31 @@ const enterTheatre = (item: any) => {
             </div>
             <div class="overlay-right">
               <button 
+                v-if="uiState.homeFilter !== 'trash'"
                 class="play-btn-gradient" 
                 @click.stop="enterTheatre(item)"
               >
                 <Play :size="18" fill="currentColor" />
               </button>
+              <button
+                v-else
+                class="restore-btn-gradient"
+                @click.stop="restoreFromTrash(item)"
+              >
+                <RotateCcw :size="18" />
+              </button>
             </div>
           </div>
         </div>
-        <div v-if="mockStore.selectedMedia?.id === item.id" class="selection-indicator"></div>
+        <div
+          v-if="(isTrashView && selectedTrashIds.has(String(item.id))) || (!isTrashView && uiState.selectedMedia?.id === item.id)"
+          class="selection-indicator"
+        ></div>
       </div>
+    </div>
+    <div v-if="filteredCollections.length === 0" class="empty-library">
+      <p>{{ emptyText }}</p>
+      <RouterLink v-if="uiState.homeFilter !== 'trash'" :to="{ name: 'import' }">前往导入</RouterLink>
     </div>
   </div>
 </template>
@@ -183,6 +363,24 @@ const enterTheatre = (item: any) => {
 
 .tool-btn:hover, .tool-btn.active {
   opacity: 1;
+}
+
+.tool-btn.danger {
+  color: var(--error);
+}
+
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.selection-summary {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .filter-bar {
@@ -258,6 +456,11 @@ const enterTheatre = (item: any) => {
   cursor: pointer;
 }
 
+.bento-item.selected .card-image-wrap {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+
 .card-image-wrap {
   position: relative;
   aspect-ratio: 1 / 1.4;
@@ -282,6 +485,46 @@ const enterTheatre = (item: any) => {
 
 .bento-item:hover .item-img {
   transform: scale(1.1);
+}
+
+.card-action-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+}
+
+.bento-item:hover .card-action-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.delete-card-btn {
+  background-color: rgba(170, 44, 44, 0.88);
+}
+
+.delete-card-btn:hover {
+  background-color: var(--error);
+}
+
+.restore-card-btn {
+  background-color: rgba(49, 126, 89, 0.88);
+}
+
+.restore-card-btn:hover {
+  background-color: #2f8f64;
 }
 
 /* Persistent Label (Bottom Left) */
@@ -378,6 +621,24 @@ const enterTheatre = (item: any) => {
   filter: brightness(1.1);
 }
 
+.restore-btn-gradient {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2f8f64, #7fc6a3);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(47, 143, 100, 0.35);
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.restore-btn-gradient:hover {
+  transform: scale(1.1);
+  filter: brightness(1.1);
+}
+
 .item-meta {
   color: rgba(255, 255, 255, 0.6);
   font-size: 11px;
@@ -394,5 +655,20 @@ const enterTheatre = (item: any) => {
   background-color: var(--primary);
   border-radius: 50%;
   box-shadow: 0 0 10px var(--primary);
+}
+
+.empty-library {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--on-surface-variant);
+}
+
+.empty-library a {
+  color: var(--primary);
+  font-weight: 700;
 }
 </style>

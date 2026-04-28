@@ -10,11 +10,17 @@ export interface Anime {
   bangumi_score?: number // Bangumi 评分
   rating: number // 个人评分 (1-10, 0=未评)
   status: AnimeStatus // 观看状态
+  is_favorite?: boolean // 是否收藏
   tags: string[] // 标签数组
+  aliases?: string[]
+  source?: 'bangumi' | 'manual'
   total_episodes: number // 总集数（由 API 提供）
   date?: string // 首播日期 YYYY-MM-DD
+  air_year?: number
   created_at: Date // 创建时间
   updated_at: Date // 更新时间
+  deleted_at?: Date | null
+  purge_requested_at?: Date | null
   overall_notes?: string // 整体观后感（富文本）
   
   // 播放状态（新增）
@@ -26,7 +32,10 @@ export interface Anime {
 export interface Episode {
   id: string // UUID
   anime_id: string // 关联 anime.id
+  bangumi_episode_id?: number
   ep: number // 集数（从 1 开始）
+  sort?: number
+  type?: number
   name?: string // 日文/英文标题
   name_cn?: string // 中文标题
   airdate?: string // 播出日期

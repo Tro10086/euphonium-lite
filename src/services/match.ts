@@ -4,63 +4,108 @@ import { fileAPI, matchAPI } from './storage'
 import type { BangumiAnime } from '@/models/Bangumi'
 
 export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
-  const files = await fileAPI.getAll()
+  const files = (await fileAPI.getAll()).filter((file) => file.scan_state !== 'missing')
 
-  // 去重：相同 keyword 只搜一次
+  // 去重：同一目录只搜一次。文件名解析只产出草稿，最终以审核页为准。
   const pendingKeywords = new Map<
     string,
-    { title: string; season: number; draft_mappings: Record<number, string[]> }
+    {
+      folderKey: string
+      rootId: string
+      parentPath: string
+      folderName: string
+      title: string
+      season: number
+      draft_mappings: Record<number, string[]>
+      unmapped_file_ids: string[]
+      warnings: string[]
+    }
   >()
 
   for (const file of files) {
     const parsed = parseVideoFileName(file.name)
-    if (!parsed?.title || !parsed.season || !parsed.episode) continue
+    const rootId = file.root_id ?? 'main'
+    const parentPath = file.parent_path ?? ''
+    const folderName = parentPath.split('/').filter(Boolean).at(-1) ?? parsed.title
+    const title = parsed.title || folderName
+    const folderKey = `${rootId}:${parentPath || '/'}`
+
+    if (!title) continue
 
     const seasonStr = parsed.season === 1 ? '' : `第${parsed.season}季`
-    const keyword = `${parsed.title}${seasonStr}`
+    const keyword = `${title}${seasonStr}`
 
     const entry =
-      pendingKeywords.get(keyword) ??
+      pendingKeywords.get(folderKey) ??
       pendingKeywords
-        .set(keyword, {
-          title: parsed.title,
+        .set(folderKey, {
+          folderKey,
+          rootId,
+          parentPath,
+          folderName,
+          title,
           season: parsed.season,
           draft_mappings: {},
+          unmapped_file_ids: [],
+          warnings: [],
         })
-        .get(keyword)!
+        .get(folderKey)!
 
-    ;(entry.draft_mappings[parsed.episode] ??= []).push(file.id)
+    if (parsed.episode) {
+      ;(entry.draft_mappings[parsed.episode] ??= []).push(file.id)
+    } else {
+      entry.unmapped_file_ids.push(file.id)
+      entry.warnings.push(`无法解析集数: ${file.name}`)
+    }
   }
 
   // 并行搜索
   const matchCandidate = new Map<string, BangumiAnime[]>()
 
   await Promise.all(
-    Array.from(pendingKeywords.entries()).map(async ([keyword, info]) => {
-      const existing = await matchAPI.getByKeyword(keyword)
+    Array.from(pendingKeywords.entries()).map(async ([folderKey, info]) => {
+      const existing = await matchAPI.getByFolderKey(folderKey)
 
       // 已完成或处理中，跳过
       if (existing) {
         if (existing.status !== 'idle') return
+        await matchAPI.update(folderKey, {
+          search_keyword: `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`,
+          draft_mappings: info.draft_mappings,
+          unmapped_file_ids: info.unmapped_file_ids,
+          warnings: info.warnings,
+        })
       } else {
         await matchAPI.add({
-          keyword,
+          folder_key: folderKey,
+          root_id: info.rootId,
+          parent_path: info.parentPath,
+          folder_name: info.folderName,
+          keyword: `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`,
+          search_keyword: `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`,
           name: info.title,
           season: info.season,
           draft_mappings: info.draft_mappings,
+          unmapped_file_ids: info.unmapped_file_ids,
+          warnings: info.warnings,
         })
       }
 
       try {
+        const keyword = `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`
         const results = await getSearchResults(keyword)
         if (results.length === 0) {
           console.warn(`无搜索结果: ${keyword}`)
           return
         }
 
-        matchCandidate.set(keyword, results)
+        const topResults = results.slice(0, 4)
+        await matchAPI.update(folderKey, {
+          candidate_bangumi_ids: topResults.map((item) => item.id),
+        })
+        matchCandidate.set(folderKey, topResults)
       } catch (error) {
-        console.error(`搜索失败: ${keyword}`, error)
+        console.error(`搜索失败: ${info.title}`, error)
       }
     }),
   )
@@ -68,28 +113,32 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
   return matchCandidate
 }
 
-export async function selectMatch(keyword: string, bangumi_id: number) {
-  const existing = await matchAPI.getByKeyword(keyword)
+export async function selectMatch(matchKey: string, bangumi_id: number) {
+  const existing = await matchAPI.getByFolderKey(matchKey)
   if (!existing || existing?.status !== 'idle') return
-  await matchAPI.update(keyword, {
+  await matchAPI.update(matchKey, {
     status: 'selected',
     selected_anime_id: bangumi_id,
   })
 }
 
-export async function mappingMatch(keyword: string, draft_mappings: Record<number, string[]>) {
-  const existing = await matchAPI.getByKeyword(keyword)
-  if (!existing || existing?.selected_anime_id) return
-  await matchAPI.update(keyword, {
+export async function claimMatchForImport(matchKey: string, bangumi_id: number) {
+  return matchAPI.claimForImport(matchKey, bangumi_id)
+}
+
+export async function mappingMatch(matchKey: string, draft_mappings: Record<number, string[]>) {
+  const existing = await matchAPI.getByFolderKey(matchKey)
+  if (!existing || !existing.selected_anime_id) return
+  await matchAPI.update(matchKey, {
     status: 'mapping',
     draft_mappings: draft_mappings,
   })
 }
 
-export async function completeMatch(keyword: string) {
-  const existing = await matchAPI.getByKeyword(keyword)
+export async function completeMatch(matchKey: string) {
+  const existing = await matchAPI.getByFolderKey(matchKey)
   if (!existing) return
-  await matchAPI.update(keyword, {
+  await matchAPI.update(matchKey, {
     status: 'completed',
   })
 }

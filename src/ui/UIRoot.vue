@@ -2,7 +2,7 @@
 import { computed, watch, onMounted, onUnmounted } from 'vue';
 import { RouterView, useRoute } from 'vue-router';
 import './index.css';
-import { mockStore } from './stores/mockData';
+import { uiState } from './stores/uiState';
 import SideNav from './components/SideNav.vue';
 import TopBar from './components/TopBar.vue';
 import DetailPanel from './components/DetailPanel.vue';
@@ -11,10 +11,10 @@ import CollectionManagerModal from './components/CollectionManagerModal.vue';
 const route = useRoute();
 const isHomeRoute = computed(() => route.name === 'home');
 
-// Theme & Compact Management
+// Theme Management
 const updateTheme = () => {
   const root = document.documentElement;
-  const theme = mockStore.settings.theme;
+  const theme = uiState.settings.theme;
   
   if (theme === 'dark') {
     root.classList.add('dark');
@@ -26,19 +26,15 @@ const updateTheme = () => {
   }
 };
 
-const updateCompactMode = () => {
-  document.documentElement.classList.toggle('compact-mode', mockStore.settings.compactMode);
-};
-
 // Listen for system theme changes
 const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const handleSystemThemeChange = () => {
-  if (mockStore.settings.theme === 'system') updateTheme();
+  if (uiState.settings.theme === 'system') updateTheme();
 };
 
 onMounted(() => {
   updateTheme();
-  updateCompactMode();
+  document.documentElement.classList.remove('compact-mode');
   mediaQuery.addEventListener('change', handleSystemThemeChange);
 });
 
@@ -46,25 +42,24 @@ onUnmounted(() => {
   mediaQuery.removeEventListener('change', handleSystemThemeChange);
 });
 
-watch(() => mockStore.settings.theme, updateTheme);
-watch(() => mockStore.settings.compactMode, updateCompactMode);
+watch(() => uiState.settings.theme, updateTheme);
 watch(
   () => route.name,
   (name) => {
     if (name !== 'home') {
-      mockStore.selectedMedia = null;
+      uiState.selectedMedia = null;
     }
   }
 );
 </script>
 
 <template>
-  <div class="app-container" :class="{ 'compact': mockStore.settings.compactMode }">
+  <div class="app-container">
     <TopBar />
     
     <div class="view-layout" :class="{ 
       'with-sidebar': isHomeRoute,
-      'compact-sidebar': mockStore.settings.compactMode && isHomeRoute
+      'compact-sidebar': uiState.settings.compactMode && isHomeRoute
     }">
       <SideNav v-if="isHomeRoute" />
       
@@ -78,7 +73,7 @@ watch(
     </div>
 
     <!-- Modals -->
-    <DetailPanel v-if="isHomeRoute && mockStore.selectedMedia" @close="mockStore.selectedMedia = null" />
+    <DetailPanel v-if="isHomeRoute && uiState.selectedMedia" @close="uiState.selectedMedia = null" />
     <CollectionManagerModal />
   </div>
 </template>
@@ -108,6 +103,10 @@ watch(
 
 .with-sidebar .content-area {
   margin-left: 280px;
+}
+
+.compact-sidebar .content-area {
+  margin-left: 80px;
 }
 
 /* Animations */

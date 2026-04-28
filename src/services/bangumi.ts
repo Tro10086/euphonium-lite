@@ -20,7 +20,7 @@ export async function getSearchResults(keyword: string): Promise<BangumiAnime[]>
 }
 
 async function searchSubjects(keyword: string): Promise<BangumiAnime[]> {
-  const url = `${BGM_API}/search/subjects?limit=5`
+  const url = `${BGM_API}/search/subjects?limit=4`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -39,7 +39,13 @@ export async function getEpisodes(subject_id: number): Promise<BangumiEpisode[]>
   })
   if (!res.ok) throw new Error(`获取剧集失败: ${res.status}`)
   const data = await res.json()
-  return data.data || []
+  return (data.data || []).map((episode: Partial<BangumiEpisode> & { subjectId?: number }) => ({
+    ...episode,
+    subject_id: episode.subject_id ?? episode.subjectId ?? subject_id,
+    sort: Number(episode.sort ?? episode.ep ?? 0),
+    ep: Number(episode.ep ?? episode.sort ?? 0),
+    type: Number(episode.type ?? 0) as BangumiEpisode['type'],
+  })) as BangumiEpisode[]
 }
 
 export async function getAnime(id: number): Promise<BangumiAnime> {

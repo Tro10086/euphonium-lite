@@ -43,31 +43,6 @@
   background: rgba(10, 10, 10, 0.85);
 }
 
-.compact-mode .side-nav {
-  width: 80px;
-  padding: 32px 12px;
-}
-
-.compact-mode .with-sidebar .content-area {
-  margin-left: 80px;
-}
-
-.compact-mode .side-nav .nav-item span,
-.compact-mode .side-nav .btn-new span,
-.compact-mode .side-nav .nav-footer span {
-  display: none;
-}
-
-.compact-mode .side-nav .nav-item {
-  justify-content: center;
-  padding: 12px;
-}
-
-.compact-mode .side-nav .nav-footer {
-  display: flex;
-  justify-content: center;
-}
-
 * {
   box-sizing: border-box;
   margin: 0;

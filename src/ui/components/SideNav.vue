@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { mockStore } from '@/ui/stores/mockData'
+import { uiState } from '@/ui/stores/uiState'
 import { LayoutGrid, Clock, Heart, Trash, Settings2, Folder } from 'lucide-vue-next'
 import BaseButton from './BaseButton.vue'
 
@@ -20,15 +20,15 @@ const getIcon = (id: string) => {
 </script>
 
 <template>
-  <aside class="side-nav">
+  <aside class="side-nav" :class="{ compact: uiState.settings.compactMode }">
     <nav class="nav-list">
       <a
-        v-for="item in mockStore.navItems"
+        v-for="item in uiState.navItems"
         :key="item.id"
         href="#"
         class="nav-item"
-        :class="{ active: item.id === mockStore.homeFilter }"
-        @click.prevent="mockStore.homeFilter = item.id"
+        :class="{ active: item.id === uiState.homeFilter }"
+        @click.prevent="uiState.homeFilter = item.id"
       >
         <component :is="getIcon(item.id)" :size="20" />
         <span>{{ item.label }}</span>
@@ -36,7 +36,7 @@ const getIcon = (id: string) => {
     </nav>
 
     <div class="nav-footer">
-      <BaseButton full-width @click="mockStore.isCollectionModalOpen = true">
+      <BaseButton full-width @click="uiState.isCollectionModalOpen = true">
         <template #icon><Settings2 :size="18" /></template>
         <span>编辑合集列表</span>
       </BaseButton>
@@ -57,6 +57,7 @@ const getIcon = (id: string) => {
   flex-direction: column;
   padding: 32px 24px;
   z-index: 80;
+  transition: width 0.25s ease, padding 0.25s ease;
 }
 
 .dark .side-nav {
@@ -96,5 +97,31 @@ const getIcon = (id: string) => {
 
 .nav-footer {
   margin-top: auto;
+}
+
+.side-nav.compact {
+  width: 80px;
+  padding: 32px 12px;
+}
+
+.side-nav.compact .nav-item {
+  justify-content: center;
+  gap: 0;
+  padding: 12px;
+}
+
+.side-nav.compact .nav-item span,
+.side-nav.compact .nav-footer span {
+  display: none;
+}
+
+.side-nav.compact .nav-footer {
+  display: flex;
+  justify-content: center;
+}
+
+.side-nav.compact :deep(.base-btn) {
+  width: 44px;
+  padding: 10px;
 }
 </style>

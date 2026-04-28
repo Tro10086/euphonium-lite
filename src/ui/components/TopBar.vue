@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { mockStore } from '@/ui/stores/mockData'
+import { uiState } from '@/ui/stores/uiState'
 import { Search } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -36,7 +36,7 @@ const isHomeRoute = computed(() => route.name === 'home')
       <div v-if="isHomeRoute" class="search-box">
         <Search :size="18" class="search-icon" />
         <input
-          v-model="mockStore.searchQuery"
+          v-model="uiState.searchQuery"
           type="text"
           placeholder="搜索..."
           class="search-input"
