@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { FolderOpen, HardDrive, Edit2, Radar, FileJson, FileCode, Check, HelpCircle, Trash2, X } from 'lucide-vue-next';
+import { FolderOpen, HardDrive, Edit2, Radar, FileJson, FileCode, Check, HelpCircle, Search, Trash2, X } from 'lucide-vue-next';
 import BaseButton from '@/ui/components/BaseButton.vue';
 import type { BangumiAnime } from '@/models/Bangumi';
 import type { BangumiEpisode } from '@/models/Bangumi';
@@ -8,7 +8,7 @@ import type { VideoFile } from '@/models/File';
 import type { LibraryRoot } from '@/models/Library';
 import type { MatchRecord } from '@/models/Match';
 import { getLibraryRoots, requestLibraryRoot, scanLibraryRoot } from '@/services/fileSystem';
-import { claimMatchForImport, createMatch } from '@/services/match';
+import { claimMatchForImport, createMatch, manualSearchMatch } from '@/services/match';
 import { saveMatchResult } from '@/services/dataWriter';
 import { fileAPI, matchAPI } from '@/services/storage';
 import { getAnime, getEpisodes } from '@/services/bangumi';
@@ -30,6 +30,10 @@ const episodePreviewMap = reactive<Record<string, BangumiEpisode[]>>({});
 const fileMap = reactive<Record<string, VideoFile>>({});
 const offsetInputs = reactive<Record<string, number>>({});
 const confirmingKeys = reactive(new Set<string>());
+const manualMatchOpenKeys = reactive(new Set<string>());
+const manualMatchingKeys = reactive(new Set<string>());
+const manualKeywordInputs = reactive<Record<string, string>>({});
+const manualMatchErrors = reactive<Record<string, string>>({});
 
 const targetFolderPath = computed(() => {
   const [firstRoot] = roots.value;
@@ -43,12 +47,21 @@ const reviewGroups = computed(() =>
     .map((match) => {
       const key = match.folder_key ?? match.keyword;
       const candidates = candidateMap[key] ?? [];
+      const selectedFromState = selectedCandidateIds[key];
+      const selectedFromRecord = match.selected_anime_id || 0;
+      const selectedId = candidates.length
+        ? candidates.some((candidate) => candidate.id === selectedFromState)
+          ? selectedFromState
+          : candidates.some((candidate) => candidate.id === selectedFromRecord)
+            ? selectedFromRecord
+            : candidates[0]?.id ?? 0
+        : 0;
       return {
         ...match,
         key,
         candidates,
         episodePreview: episodePreviewMap[key] ?? [],
-        selectedId: selectedCandidateIds[key] ?? candidates[0]?.id ?? match.selected_anime_id,
+        selectedId,
         mappingRows: Object.entries(match.draft_mappings ?? {}),
         unmappedFileIds: match.unmapped_file_ids ?? [],
       };
@@ -99,6 +112,11 @@ async function refreshMatches() {
   for (const match of matches.value) {
     const key = match.folder_key ?? match.keyword;
     offsetInputs[key] ??= match.offset ?? 0;
+    if (!match.candidate_bangumi_ids?.length) {
+      delete candidateMap[key];
+      delete selectedCandidateIds[key];
+      delete episodePreviewMap[key];
+    }
   }
   await refreshFileCache(matches.value);
 }
@@ -296,6 +314,70 @@ const selectCandidate = (key: string, bangumiId: number) => {
   void loadEpisodePreview(key, bangumiId);
 };
 
+function openManualMatch(item: {
+  key: string;
+  keyword: string;
+  search_keyword?: string;
+  name?: string;
+  folder_name?: string;
+}) {
+  const currentValue = manualKeywordInputs[item.key]?.trim();
+  manualKeywordInputs[item.key] = currentValue || item.search_keyword || item.name || item.folder_name || item.keyword;
+  manualMatchErrors[item.key] = '';
+  manualMatchOpenKeys.add(item.key);
+}
+
+function closeManualMatch(key: string) {
+  manualMatchOpenKeys.delete(key);
+  manualMatchErrors[key] = '';
+}
+
+const isManualMatchOpen = (key: string) => manualMatchOpenKeys.has(key);
+const isManualMatching = (key: string) => manualMatchingKeys.has(key);
+
+function selectedIdForConfirm(item: { key: string; selectedId?: number }) {
+  return selectedCandidateIds[item.key] ?? item.selectedId ?? 0;
+}
+
+async function submitManualMatch(key: string) {
+  const keyword = manualKeywordInputs[key]?.trim() ?? '';
+  if (!keyword) {
+    manualMatchErrors[key] = '请输入动画名称';
+    return;
+  }
+  if (manualMatchingKeys.has(key)) return;
+
+  manualMatchingKeys.add(key);
+  errorText.value = '';
+  statusText.value = `正在用「${keyword}」重新匹配...`;
+
+  try {
+    const topResults = await manualSearchMatch(key, keyword);
+    if (topResults.length === 0) {
+      delete candidateMap[key];
+      delete selectedCandidateIds[key];
+      delete episodePreviewMap[key];
+      manualMatchErrors[key] = '无法匹配，无法关联';
+      statusText.value = '无法匹配，无法关联';
+      await refreshMatches();
+      return;
+    }
+
+    const firstResult = topResults[0]!;
+    candidateMap[key] = topResults;
+    selectedCandidateIds[key] = firstResult.id;
+    manualMatchErrors[key] = '';
+    manualMatchOpenKeys.delete(key);
+    await loadEpisodePreview(key, firstResult.id);
+    await refreshMatches();
+    statusText.value = '重新匹配完成，请确认关联结果';
+  } catch (error) {
+    manualMatchErrors[key] = error instanceof Error ? error.message : String(error);
+  } finally {
+    manualMatchingKeys.delete(key);
+  }
+}
+
 const startScan = async () => {
   await runWithStatus('正在扫描目录并匹配 Bangumi...', async () => {
     if (roots.value.length === 0) {
@@ -334,7 +416,7 @@ const startScan = async () => {
 const confirmAll = () => {
   runWithStatus('正在写入全部已选匹配...', async () => {
     for (const group of reviewGroups.value) {
-      if (!group.selectedId) continue;
+      if (!group.candidates.length || !group.selectedId) continue;
       await confirmGroup(group.key, group.selectedId, false);
     }
     await refreshMatches();
@@ -571,10 +653,42 @@ onMounted(async () => {
                   </div>
                 </div>
 
+                <div v-if="isManualMatchOpen(item.key)" class="manual-match-panel">
+                  <input
+                    v-model="manualKeywordInputs[item.key]"
+                    class="manual-match-input"
+                    type="text"
+                    placeholder="输入动画名称重新匹配"
+                    @keyup.enter="submitManualMatch(item.key)"
+                  />
+                  <BaseButton
+                    variant="secondary"
+                    :disabled="isBusy || isManualMatching(item.key)"
+                    @click="submitManualMatch(item.key)"
+                  >
+                    <template #icon><Search :size="14" /></template>
+                    {{ isManualMatching(item.key) ? '匹配中...' : '匹配' }}
+                  </BaseButton>
+                  <BaseButton variant="ghost" :disabled="isManualMatching(item.key)" @click="closeManualMatch(item.key)">
+                    取消
+                  </BaseButton>
+                  <p v-if="manualMatchErrors[item.key]" class="manual-match-error">
+                    {{ manualMatchErrors[item.key] }}
+                  </p>
+                </div>
+
                 <div class="item-footer">
                   <BaseButton
+                    variant="ghost"
                     :disabled="isBusy || isConfirming(item.key)"
-                    @click="confirmOne(item.key, selectedCandidateIds[item.key] ?? item.selectedId)"
+                    @click="openManualMatch(item)"
+                  >
+                    <template #icon><Search :size="16" /></template>
+                    手动关联
+                  </BaseButton>
+                  <BaseButton
+                    :disabled="isBusy || isConfirming(item.key) || !selectedIdForConfirm(item)"
+                    @click="confirmOne(item.key, selectedIdForConfirm(item))"
                   >
                     {{ isConfirming(item.key) ? '写入中...' : '确认' }}
                   </BaseButton>
@@ -605,8 +719,34 @@ onMounted(async () => {
                   <span>季：{{ item.season }}</span>
                 </div>
                 <p v-if="item.warnings?.length" class="parse-warning">{{ item.warnings.join('；') }}</p>
+                <div v-if="isManualMatchOpen(item.key)" class="manual-match-panel">
+                  <input
+                    v-model="manualKeywordInputs[item.key]"
+                    class="manual-match-input"
+                    type="text"
+                    placeholder="输入动画名称重新匹配"
+                    @keyup.enter="submitManualMatch(item.key)"
+                  />
+                  <BaseButton
+                    variant="secondary"
+                    :disabled="isBusy || isManualMatching(item.key)"
+                    @click="submitManualMatch(item.key)"
+                  >
+                    <template #icon><Search :size="14" /></template>
+                    {{ isManualMatching(item.key) ? '匹配中...' : '匹配' }}
+                  </BaseButton>
+                  <BaseButton variant="ghost" :disabled="isManualMatching(item.key)" @click="closeManualMatch(item.key)">
+                    取消
+                  </BaseButton>
+                  <p v-if="manualMatchErrors[item.key]" class="manual-match-error">
+                    {{ manualMatchErrors[item.key] }}
+                  </p>
+                </div>
                 <div class="item-footer">
-                  <BaseButton variant="ghost">手动关联</BaseButton>
+                  <BaseButton variant="ghost" :disabled="isBusy" @click="openManualMatch(item)">
+                    <template #icon><Search :size="16" /></template>
+                    手动关联
+                  </BaseButton>
                 </div>
               </div>
             </template>
@@ -1092,9 +1232,48 @@ onMounted(async () => {
   font-weight: 700;
 }
 
+.manual-match-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 14px;
+  background-color: var(--surface-low);
+}
+
+.manual-match-input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.manual-match-input:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+.manual-match-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--error);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .item-footer {
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-top: auto;
 }
 

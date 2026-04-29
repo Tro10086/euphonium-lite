@@ -10,30 +10,35 @@ const router = createRouter({
         {
           path: '',
           name: 'home',
-          component: () => import('@/ui/views/HomeView.vue')
+          component: () => import('@/ui/views/HomeView.vue'),
         },
         {
           path: 'import',
           name: 'import',
-          component: () => import('@/ui/views/ImportView.vue')
+          component: () => import('@/ui/views/ImportView.vue'),
+        },
+        {
+          path: 'notes',
+          name: 'notes',
+          component: () => import('@/ui/views/NotesView.vue'),
         },
         {
           path: 'settings',
           name: 'settings',
-          component: () => import('@/ui/views/SettingsView.vue')
+          component: () => import('@/ui/views/SettingsView.vue'),
         },
         {
           path: 'theatre/:id',
           name: 'theatre',
-          component: () => import('@/ui/views/TheatreView.vue')
-        }
-      ]
+          component: () => import('@/ui/views/TheatreView.vue'),
+        },
+      ],
     },
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/'
-    }
-  ]
+      redirect: '/',
+    },
+  ],
 })
 
 export default router

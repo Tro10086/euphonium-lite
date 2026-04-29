@@ -7,6 +7,7 @@ import { Search } from 'lucide-vue-next'
 const route = useRoute()
 const navLinks = [
   { name: 'home', label: '首页', to: { name: 'home' } },
+  { name: 'notes', label: '笔记', to: { name: 'notes' } },
   { name: 'import', label: '导入', to: { name: 'import' } },
   { name: 'settings', label: '设置', to: { name: 'settings' } },
 ]

@@ -34,6 +34,10 @@ class EuphoniumNotesDB extends Dexie {
       notes: 'id, targetType, targetId, updated_at, [targetType+targetId]',
       attachments: 'id, noteId, name, mimeType, created_at',
     })
+    this.version(2).stores({
+      notes: 'id, targetType, targetId, updated_at, deleted_at, [targetType+targetId]',
+      attachments: 'id, noteId, name, mimeType, created_at',
+    })
   }
 }
 
@@ -111,6 +115,7 @@ export const notesAPI = {
       attachmentIds: cloneStringArray(draft.attachmentIds ?? existing?.attachmentIds),
       created_at: existing?.created_at ?? now,
       updated_at: now,
+      deleted_at: existing?.deleted_at ?? null,
     }
 
     await notesDb.notes.put(note)
@@ -121,8 +126,17 @@ export const notesAPI = {
     return notesDb.notes.get(id)
   },
 
-  async getByTarget(targetType: NoteTargetType, targetId: string) {
-    return notesDb.notes.where('[targetType+targetId]').equals([targetType, targetId]).toArray()
+  async getByTarget(
+    targetType: NoteTargetType,
+    targetId: string,
+    options: { includeDeleted?: boolean } = {},
+  ) {
+    const notes = await notesDb.notes
+      .where('[targetType+targetId]')
+      .equals([targetType, targetId])
+      .toArray()
+    if (options.includeDeleted) return notes
+    return notes.filter((note) => !note.deleted_at)
   },
 
   async getAll() {
@@ -134,11 +148,29 @@ export const notesAPI = {
     await notesDb.notes.bulkPut(notes)
   },
 
-  async delete(id: string) {
+  async softDelete(id: string) {
+    await notesDb.notes.update(id, {
+      deleted_at: new Date(),
+      updated_at: new Date(),
+    })
+  },
+
+  async restore(id: string) {
+    await notesDb.notes.update(id, {
+      deleted_at: null,
+      updated_at: new Date(),
+    })
+  },
+
+  async deletePermanently(id: string) {
     await notesDb.transaction('rw', [notesDb.notes, notesDb.attachments], async () => {
       await notesDb.attachments.where('noteId').equals(id).delete()
       await notesDb.notes.delete(id)
     })
+  },
+
+  async delete(id: string) {
+    await this.softDelete(id)
   },
 }
 

@@ -48,10 +48,7 @@ function countExportData(data: EuphoniumExportData['data']): Record<ExportDataKe
   }
 }
 
-function restoreDateFields<T extends Record<string, unknown>>(
-  item: T,
-  fields: Array<keyof T>,
-): T {
+function restoreDateFields<T extends Record<string, unknown>>(item: T, fields: Array<keyof T>): T {
   const restored = { ...item }
   for (const field of fields) {
     const value = restored[field]
@@ -92,7 +89,11 @@ function normalizeImportedData(data: EuphoniumExportData): EuphoniumExportData {
         ]),
       ) as unknown as EuphoniumExportData['data']['libraryRoots'],
       notes: data.data.notes.map((item) =>
-        restoreDateFields(item as unknown as Record<string, unknown>, ['created_at', 'updated_at']),
+        restoreDateFields(item as unknown as Record<string, unknown>, [
+          'created_at',
+          'updated_at',
+          'deleted_at',
+        ]),
       ) as unknown as Note[],
       attachments: data.data.attachments,
     },
@@ -119,8 +120,10 @@ async function filterExistingMatches<T extends { keyword: string }>(items: T[]) 
   const skipped: T[] = []
 
   for (const item of items) {
-    const key = 'folder_key' in item && typeof item.folder_key === 'string' ? item.folder_key : item.keyword
-    if ((await db.match.get(key)) ?? (await db.match.where('folder_key').equals(key).first())) skipped.push(item)
+    const key =
+      'folder_key' in item && typeof item.folder_key === 'string' ? item.folder_key : item.keyword
+    if ((await db.match.get(key)) ?? (await db.match.where('folder_key').equals(key).first()))
+      skipped.push(item)
     else kept.push(item)
   }
 
@@ -128,15 +131,16 @@ async function filterExistingMatches<T extends { keyword: string }>(items: T[]) 
 }
 
 export async function createExportData(): Promise<EuphoniumExportData> {
-  const [anime, episodes, files, matches, libraryRoots, notes, attachmentMetadata] = await Promise.all([
-    db.anime.toArray(),
-    db.episodes.toArray(),
-    db.files.toArray(),
-    db.match.toArray(),
-    db.libraryRoots.toArray(),
-    notesAPI.getAll(),
-    attachmentAPI.getAllMetadata(),
-  ])
+  const [anime, episodes, files, matches, libraryRoots, notes, attachmentMetadata] =
+    await Promise.all([
+      db.anime.toArray(),
+      db.episodes.toArray(),
+      db.files.toArray(),
+      db.match.toArray(),
+      db.libraryRoots.toArray(),
+      notesAPI.getAll(),
+      attachmentAPI.getAllMetadata(),
+    ])
 
   const attachments: ExportedAttachmentManifestItem[] = attachmentMetadata.map((attachment) => ({
     ...attachment,
@@ -180,8 +184,7 @@ export function validateImportData(value: unknown): ImportValidationResult {
     return { ok: false, errors: ['Import payload must be an object.'], warnings }
   }
 
-  const schemaVersion =
-    typeof value.schemaVersion === 'number' ? value.schemaVersion : undefined
+  const schemaVersion = typeof value.schemaVersion === 'number' ? value.schemaVersion : undefined
 
   if (schemaVersion !== EXPORT_SCHEMA_VERSION) {
     errors.push(`Unsupported schemaVersion: ${String(value.schemaVersion)}.`)
@@ -206,7 +209,9 @@ export function validateImportData(value: unknown): ImportValidationResult {
   }
 
   if (value.data.attachments.length > 0) {
-    warnings.push('Attachment blobs are not included in JSON export; only metadata can be imported.')
+    warnings.push(
+      'Attachment blobs are not included in JSON export; only metadata can be imported.',
+    )
   }
 
   return {

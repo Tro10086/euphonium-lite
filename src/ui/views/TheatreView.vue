@@ -1,34 +1,47 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
-import type { Anime, Episode } from '@/models/Anime';
-import type { VideoFile } from '@/models/File';
-import type { TipTapJSON } from '@/models/Note';
-import { animeAPI, episodeAPI, fileAPI } from '@/services/storage';
-import { createPlaybackUrl, revokePlaybackUrl } from '@/services/playback';
-import { attachmentAPI, notesAPI } from '@/services/notes';
-import { uiState } from '@/ui/stores/uiState';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import type { Anime, Episode } from '@/models/Anime'
+import type { VideoFile } from '@/models/File'
+import type { TipTapJSON } from '@/models/Note'
+import { animeAPI, episodeAPI, fileAPI } from '@/services/storage'
+import { createPlaybackUrl, revokePlaybackUrl } from '@/services/playback'
+import { attachmentAPI, notesAPI } from '@/services/notes'
+import { uiState } from '@/ui/stores/uiState'
 import {
-  Play, PlayCircle, Star, Maximize, Pause,
-  Volume2, VolumeX, ChevronDown, Heart, SkipBack, SkipForward
-} from 'lucide-vue-next';
+  Play,
+  PlayCircle,
+  Star,
+  Maximize,
+  Pause,
+  Volume2,
+  VolumeX,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Heart,
+  SkipBack,
+  SkipForward,
+} from 'lucide-vue-next'
 
-const route = useRoute();
-const videoRef = ref<HTMLVideoElement | null>(null);
-const realAnime = ref<Anime | null>(null);
-const realEpisodes = ref<Episode[]>([]);
-const filesByEpisode = ref<Record<string, VideoFile[]>>({});
-const isLoading = ref(false);
-const playbackError = ref('');
-const videoUrl = ref('');
-const noteId = ref<string | null>(null);
-const noteText = ref('');
-const noteAttachmentIds = ref<string[]>([]);
-const noteMessage = ref('');
+const route = useRoute()
+const router = useRouter()
+const videoRef = ref<HTMLVideoElement | null>(null)
+const playerSectionRef = ref<HTMLElement | null>(null)
+const realAnime = ref<Anime | null>(null)
+const realEpisodes = ref<Episode[]>([])
+const filesByEpisode = ref<Record<string, VideoFile[]>>({})
+const isLoading = ref(false)
+const playbackError = ref('')
+const videoUrl = ref('')
+const noteId = ref<string | null>(null)
+const noteText = ref('')
+const noteAttachmentIds = ref<string[]>([])
+const noteMessage = ref('')
 
-const hasRealData = computed(() => Boolean(realAnime.value));
+const hasRealData = computed(() => Boolean(realAnime.value))
 const uniqueTags = (tags: string[] | undefined) =>
-  Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)));
+  Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)))
 const media = computed(() => {
   if (!realAnime.value) {
     return {
@@ -42,104 +55,150 @@ const media = computed(() => {
       desc: '请先在导入页扫描并确认本地媒体。',
       image: '',
       episodesList: [],
-    };
+    }
   }
 
   return {
     id: realAnime.value.id,
     title: realAnime.value.name_cn || realAnime.value.name || '未命名条目',
-    year: realAnime.value.air_year || (realAnime.value.date ? Number(realAnime.value.date.slice(0, 4)) : ''),
+    year:
+      realAnime.value.air_year ||
+      (realAnime.value.date ? Number(realAnime.value.date.slice(0, 4)) : ''),
     episodes: realAnime.value.total_episodes || realEpisodes.value.length,
     score: realAnime.value.bangumi_score || realAnime.value.rating || 0,
     tags: uniqueTags(realAnime.value.tags),
     desc: realAnime.value.summary || '暂无简介',
     image: realAnime.value.cover || '',
     episodesList: realEpisodes.value.map((ep) => ep.name_cn || ep.name || `第 ${ep.ep} 集`),
-  };
-});
+  }
+})
 
 const episodeRows = computed(() => {
-  if (!hasRealData.value) return [];
+  if (!hasRealData.value) return []
 
   return realEpisodes.value.map((ep) => ({
     id: ep.id,
     title: ep.name_cn || ep.name || `第 ${ep.ep} 集`,
     ep: ep.ep,
     progress: ep.watch_percentage || 0,
-  }));
-});
-const activeEpisodeIdx = ref(0);
-const rating = ref(0);
-const isFavorited = ref(false);
+  }))
+})
+const activeEpisodeIdx = ref(0)
+const rating = ref(0)
+const isFavorited = ref(false)
 
 // Player State
-const isPlaying = ref(false);
-const currentTime = ref(0);
-const duration = ref(0);
-const volume = ref(80);
-const isMuted = ref(false);
-const currentSourceIdx = ref(0);
-const isSeeking = ref(false);
-const isSourcePickerOpen = ref(false);
+const isPlaying = ref(false)
+const currentTime = ref(0)
+const duration = ref(0)
+const volume = ref(80)
+const isMuted = ref(false)
+const currentSourceIdx = ref(0)
+const isSeeking = ref(false)
+const isSourcePickerOpen = ref(false)
+const isInfoDrawerOpen = ref(false)
+const playerFrameWidth = ref('100%')
+const playerFrameStyle = computed(() => ({
+  width: playerFrameWidth.value,
+}))
+let playerResizeObserver: ResizeObserver | null = null
 
-const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null);
+const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null)
 const currentFiles = computed(() => {
-  const ep = activeEpisode.value;
-  return ep ? filesByEpisode.value[ep.id] || [] : [];
-});
-const activeVideoFile = computed(() => currentFiles.value[currentSourceIdx.value] || null);
-const noteTargetId = computed(() => activeEpisode.value?.id ?? realAnime.value?.id ?? '');
-const noteTargetType = computed(() => (activeEpisode.value ? 'episode' : 'anime'));
+  const ep = activeEpisode.value
+  return ep ? filesByEpisode.value[ep.id] || [] : []
+})
+const activeVideoFile = computed(() => currentFiles.value[currentSourceIdx.value] || null)
+const noteTargetId = computed(() => activeEpisode.value?.id ?? realAnime.value?.id ?? '')
+const noteTargetType = computed(() => (activeEpisode.value ? 'episode' : 'anime'))
 const sourceOptions = computed(() => {
-  if (!hasRealData.value) return ['暂无可播放文件'];
-  return currentFiles.value.length ? currentFiles.value.map((file) => file.name) : ['暂无可播放文件'];
-});
+  if (!hasRealData.value) return ['暂无可播放文件']
+  return currentFiles.value.length
+    ? currentFiles.value.map((file) => file.name)
+    : ['暂无可播放文件']
+})
 const progressPercent = computed(() => {
-  if (!duration.value) return 0;
-  return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100));
-});
+  if (!duration.value) return 0
+  return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100))
+})
+
+const updatePlayerFrame = () => {
+  const section = playerSectionRef.value
+  if (!section) {
+    playerFrameWidth.value = '100%'
+    return
+  }
+
+  const { width, height } = section.getBoundingClientRect()
+  if (width <= 0 || height <= 0) {
+    playerFrameWidth.value = '100%'
+    return
+  }
+
+  playerFrameWidth.value = `${Math.floor(Math.min(width, (height * 16) / 9))}px`
+}
 
 const togglePlay = async () => {
-  playbackError.value = '';
+  playbackError.value = ''
 
   if (!activeVideoFile.value) {
     playbackError.value = hasRealData.value
       ? '当前剧集没有关联本地视频文件。'
-      : '请先导入并确认真实馆藏数据。';
-    return;
+      : '请先导入并确认真实馆藏数据。'
+    return
   }
 
-  const video = videoRef.value;
-  if (!video) return;
+  const video = videoRef.value
+  if (!video) return
 
   try {
-    if (video.paused) await video.play();
-    else video.pause();
+    if (video.paused) await video.play()
+    else video.pause()
   } catch {
-    playbackError.value = 'Lite 暂不支持此视频格式、编码或浏览器拒绝播放。';
+    playbackError.value = 'Lite 暂不支持此视频格式、编码或浏览器拒绝播放。'
   }
-};
+}
 const toggleMute = () => {
-  isMuted.value = !isMuted.value;
-  if (videoRef.value) videoRef.value.muted = isMuted.value;
-};
-const toggleSourcePicker = () => isSourcePickerOpen.value = !isSourcePickerOpen.value;
+  isMuted.value = !isMuted.value
+  if (videoRef.value) videoRef.value.muted = isMuted.value
+}
+const toggleSourcePicker = () => (isSourcePickerOpen.value = !isSourcePickerOpen.value)
+const selectSource = (index: number) => {
+  currentSourceIdx.value = index
+  isSourcePickerOpen.value = false
+}
 
 const formatTime = (seconds: number) => {
-  const safeSeconds = Number.isFinite(seconds) ? seconds : 0;
-  const h = Math.floor(safeSeconds / 3600);
-  const m = Math.floor((safeSeconds % 3600) / 60);
-  const s = Math.floor(safeSeconds % 60);
-  return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-};
+  const safeSeconds = Number.isFinite(seconds) ? seconds : 0
+  const h = Math.floor(safeSeconds / 3600)
+  const m = Math.floor((safeSeconds % 3600) / 60)
+  const s = Math.floor(safeSeconds % 60)
+  return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
+const getRouteEpisodeId = () => {
+  const value = route.query.episodeId
+  return typeof value === 'string' ? value : ''
+}
+
+const getRouteStartSeconds = () => {
+  const value = route.query.t
+  const seconds = typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.floor(seconds) : null
+}
+
+const goToAllNotes = () => {
+  if (!realAnime.value) return
+  void router.push({ name: 'notes', query: { animeId: realAnime.value.id } })
+}
 
 const saveProgress = async () => {
-  if (!hasRealData.value || !realAnime.value || !activeEpisode.value) return;
+  if (!hasRealData.value || !realAnime.value || !activeEpisode.value) return
 
-  const position = Math.max(0, Math.floor(currentTime.value));
-  const total = Math.max(0, Math.floor(duration.value));
-  const percentage = total > 0 ? Math.min(100, Math.round((position / total) * 100)) : 0;
-  const now = new Date();
+  const position = Math.max(0, Math.floor(currentTime.value))
+  const total = Math.max(0, Math.floor(duration.value))
+  const percentage = total > 0 ? Math.min(100, Math.round((position / total) * 100)) : 0
+  const now = new Date()
 
   await Promise.all([
     episodeAPI.update(activeEpisode.value.id, {
@@ -155,10 +214,10 @@ const saveProgress = async () => {
       last_watched_at: now,
       status: 'watching',
     }),
-  ]);
+  ])
 
-  const idx = activeEpisodeIdx.value;
-  const ep = realEpisodes.value[idx];
+  const idx = activeEpisodeIdx.value
+  const ep = realEpisodes.value[idx]
   if (ep) {
     realEpisodes.value[idx] = {
       ...ep,
@@ -168,7 +227,7 @@ const saveProgress = async () => {
       watched: percentage >= 90,
       watched_at: percentage >= 90 ? now : ep.watched_at,
       updated_at: now,
-    };
+    }
   }
   realAnime.value = {
     ...realAnime.value,
@@ -177,62 +236,60 @@ const saveProgress = async () => {
     last_watched_at: now,
     status: 'watching',
     updated_at: now,
-  };
-};
+  }
+}
 
 function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
-  const paragraphs: TipTapJSON[] = text
-    .split('\n')
-    .map((line) => ({
-      type: 'paragraph',
-      content: line ? [{ type: 'text', text: line }] : [],
-    }));
+  const paragraphs: TipTapJSON[] = text.split('\n').map((line) => ({
+    type: 'paragraph',
+    content: line ? [{ type: 'text', text: line }] : [],
+  }))
 
   const images: TipTapJSON[] = attachmentIds.map((attachmentId) => ({
     type: 'image',
     attrs: { attachmentId },
-  }));
+  }))
 
   return {
     type: 'doc',
     content: [...paragraphs, ...images],
-  };
+  }
 }
 
 function plainTextFromTipTapJson(json: TipTapJSON): string {
-  const lines: string[] = [];
+  const lines: string[] = []
   const walk = (node: TipTapJSON) => {
     if (node.type === 'paragraph') {
-      lines.push((node.content ?? []).map((child) => child.text ?? '').join(''));
-      return;
+      lines.push((node.content ?? []).map((child) => child.text ?? '').join(''))
+      return
     }
-    for (const child of node.content ?? []) walk(child);
-  };
-  walk(json);
-  return lines.join('\n').trim();
+    for (const child of node.content ?? []) walk(child)
+  }
+  walk(json)
+  return lines.join('\n').trim()
 }
 
 async function loadNote() {
-  noteMessage.value = '';
-  noteId.value = null;
-  noteText.value = '';
-  noteAttachmentIds.value = [];
-  const targetId = noteTargetId.value;
-  if (!targetId) return;
+  noteMessage.value = ''
+  noteId.value = null
+  noteText.value = ''
+  noteAttachmentIds.value = []
+  const targetId = noteTargetId.value
+  if (!targetId) return
 
-  const notes = await notesAPI.getByTarget(noteTargetType.value, targetId);
-  const note = notes[0];
-  if (!note) return;
+  const notes = await notesAPI.getByTarget(noteTargetType.value, targetId)
+  const note = notes[0]
+  if (!note) return
 
-  noteId.value = note.id;
-  noteText.value = note.plainText || plainTextFromTipTapJson(note.tiptapJson);
-  noteAttachmentIds.value = [...note.attachmentIds];
+  noteId.value = note.id
+  noteText.value = note.plainText || plainTextFromTipTapJson(note.tiptapJson)
+  noteAttachmentIds.value = [...note.attachmentIds]
 }
 
 async function saveNote(message = '笔记已保存') {
-  const targetId = noteTargetId.value;
-  if (!targetId) return;
-  if (!noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) return;
+  const targetId = noteTargetId.value
+  if (!targetId) return
+  if (!noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) return
 
   noteId.value = await notesAPI.save({
     id: noteId.value ?? undefined,
@@ -241,259 +298,276 @@ async function saveNote(message = '笔记已保存') {
     tiptapJson: textToTipTapJson(noteText.value, noteAttachmentIds.value),
     plainText: noteText.value,
     attachmentIds: [...noteAttachmentIds.value],
-  });
-  noteMessage.value = message;
+  })
+  noteMessage.value = message
 }
 
 const toggleFavorite = async () => {
-  if (!realAnime.value) return;
+  if (!realAnime.value) return
 
-  const nextValue = !isFavorited.value;
-  await animeAPI.update(realAnime.value.id, { is_favorite: nextValue });
-  isFavorited.value = nextValue;
+  const nextValue = !isFavorited.value
+  await animeAPI.update(realAnime.value.id, { is_favorite: nextValue })
+  isFavorited.value = nextValue
   realAnime.value = {
     ...realAnime.value,
     is_favorite: nextValue,
     updated_at: new Date(),
-  };
-  uiState.libraryVersion += 1;
-};
+  }
+  uiState.libraryVersion += 1
+}
 
 function insertTimestampNote() {
-  const seconds = Math.max(0, Math.floor(currentTime.value));
-  const label = `[${formatTime(seconds)}]`;
-  noteText.value = noteText.value ? `${noteText.value}\n${label} ` : `${label} `;
+  const seconds = Math.max(0, Math.floor(currentTime.value))
+  const label = `[${formatTime(seconds)}]`
+  noteText.value = noteText.value ? `${noteText.value}\n${label} ` : `${label} `
 }
 
 async function captureScreenshotNote() {
-  const video = videoRef.value;
+  const video = videoRef.value
   if (!video || !video.videoWidth || !video.videoHeight) {
-    noteMessage.value = '当前没有可截图的视频画面';
-    return;
+    noteMessage.value = '当前没有可截图的视频画面'
+    return
   }
 
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const context = canvas.getContext('2d');
-  if (!context) return;
-  context.drawImage(video, 0, 0);
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.drawImage(video, 0, 0)
 
   const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(resolve, 'image/jpeg', 0.85);
-  });
+    canvas.toBlob(resolve, 'image/jpeg', 0.85)
+  })
   if (!blob) {
-    noteMessage.value = '截图生成失败';
-    return;
+    noteMessage.value = '截图生成失败'
+    return
   }
 
-  await saveNote('笔记已保存，正在添加截图...');
-  if (!noteId.value) return;
+  await saveNote('笔记已保存，正在添加截图...')
+  if (!noteId.value) return
 
   const attachmentId = await attachmentAPI.put({
     noteId: noteId.value,
     name: `screenshot-${Date.now()}.jpg`,
     mimeType: 'image/jpeg',
     blob,
-  });
-  noteAttachmentIds.value = [...noteAttachmentIds.value, attachmentId];
-  await saveNote('截图已加入笔记');
+  })
+  noteAttachmentIds.value = [...noteAttachmentIds.value, attachmentId]
+  await saveNote('截图已加入笔记')
 }
 
-let lastProgressSaveAt = 0;
+let lastProgressSaveAt = 0
 const saveProgressThrottled = () => {
-  const now = Date.now();
-  if (now - lastProgressSaveAt < 5000) return;
-  lastProgressSaveAt = now;
-  void saveProgress();
-};
+  const now = Date.now()
+  if (now - lastProgressSaveAt < 5000) return
+  lastProgressSaveAt = now
+  void saveProgress()
+}
 
 const setEpisode = async (index: number) => {
-  await saveProgress();
-  await saveNote('笔记已自动保存');
-  activeEpisodeIdx.value = index;
+  await saveProgress()
+  await saveNote('笔记已自动保存')
+  activeEpisodeIdx.value = index
   if (!hasRealData.value) {
-    currentTime.value = 0;
-    duration.value = 0;
-    isPlaying.value = false;
-    return;
+    currentTime.value = 0
+    duration.value = 0
+    isPlaying.value = false
+    return
   }
-  currentTime.value = realEpisodes.value[index]?.watch_progress || 0;
-  duration.value = realEpisodes.value[index]?.duration_seconds || 0;
-  currentSourceIdx.value = 0;
-  isPlaying.value = false;
-  playbackError.value = '';
-  await loadNote();
-};
+  currentTime.value = realEpisodes.value[index]?.watch_progress || 0
+  duration.value = realEpisodes.value[index]?.duration_seconds || 0
+  currentSourceIdx.value = 0
+  isPlaying.value = false
+  playbackError.value = ''
+  await loadNote()
+}
 
 const prevEpisode = () => {
-  if (activeEpisodeIdx.value > 0) void setEpisode(activeEpisodeIdx.value - 1);
-};
+  if (activeEpisodeIdx.value > 0) void setEpisode(activeEpisodeIdx.value - 1)
+}
 
 const nextEpisode = () => {
   if (activeEpisodeIdx.value < episodeRows.value.length - 1) {
-    void setEpisode(activeEpisodeIdx.value + 1);
+    void setEpisode(activeEpisodeIdx.value + 1)
   }
-};
+}
 
 const onProgressInput = (e: Event) => {
-  const val = Number((e.target as HTMLInputElement).value);
-  currentTime.value = val;
-  if (videoRef.value) videoRef.value.currentTime = val;
-};
+  const val = Number((e.target as HTMLInputElement).value)
+  currentTime.value = val
+  if (videoRef.value) videoRef.value.currentTime = val
+}
 
 const onProgressMouseDown = () => {
-  isSeeking.value = true;
-};
+  isSeeking.value = true
+}
 
 const onProgressMouseUp = () => {
-  isSeeking.value = false;
-  void saveProgress();
-};
+  isSeeking.value = false
+  void saveProgress()
+}
 
 const toggleFullscreen = () => {
-  const el = document.querySelector('.video-container');
+  const el = document.querySelector('.video-container')
   if (!document.fullscreenElement) {
-    el?.requestFullscreen().catch(err => console.error(err));
+    el?.requestFullscreen().catch((err) => console.error(err))
   } else {
-    void document.exitFullscreen();
+    void document.exitFullscreen()
   }
-};
+}
 
 const loadPlaybackUrl = async () => {
-  revokePlaybackUrl(videoUrl.value);
-  videoUrl.value = '';
-  playbackError.value = '';
-  isPlaying.value = false;
+  revokePlaybackUrl(videoUrl.value)
+  videoUrl.value = ''
+  playbackError.value = ''
+  isPlaying.value = false
 
-  const file = activeVideoFile.value;
-  if (!file) return;
+  const file = activeVideoFile.value
+  if (!file) return
 
   try {
-    videoUrl.value = await createPlaybackUrl(file);
+    videoUrl.value = await createPlaybackUrl(file)
   } catch (error) {
-    playbackError.value = error instanceof Error ? error.message : String(error);
+    playbackError.value = error instanceof Error ? error.message : String(error)
   }
-};
+}
 
 const loadTheatreData = async () => {
-  isLoading.value = true;
-  playbackError.value = '';
-  revokePlaybackUrl(videoUrl.value);
-  videoUrl.value = '';
+  isLoading.value = true
+  playbackError.value = ''
+  revokePlaybackUrl(videoUrl.value)
+  videoUrl.value = ''
 
   try {
-    const animeId = String(route.params.id || '');
-    const anime = await animeAPI.getById(animeId);
+    const animeId = String(route.params.id || '')
+    const anime = await animeAPI.getById(animeId)
 
     if (!anime) {
-      realAnime.value = null;
-      realEpisodes.value = [];
-      filesByEpisode.value = {};
-      activeEpisodeIdx.value = 0;
-      currentTime.value = 0;
-      duration.value = 0;
-      isFavorited.value = false;
-      return;
+      realAnime.value = null
+      realEpisodes.value = []
+      filesByEpisode.value = {}
+      activeEpisodeIdx.value = 0
+      currentTime.value = 0
+      duration.value = 0
+      isFavorited.value = false
+      return
     }
 
     const episodes = (await episodeAPI.getByAnimeId(anime.id)).sort(
       (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
-    );
-    const fileIds = [...new Set(episodes.flatMap((ep) => ep.file_ids || []))];
-    const files = fileIds.length ? await fileAPI.getByIds(fileIds) : [];
-    const filesById = new Map(files.map((file) => [file.id, file]));
+    )
+    const fileIds = [...new Set(episodes.flatMap((ep) => ep.file_ids || []))]
+    const files = fileIds.length ? await fileAPI.getByIds(fileIds) : []
+    const filesById = new Map(files.map((file) => [file.id, file]))
 
-    realAnime.value = anime;
-    isFavorited.value = Boolean(anime.is_favorite);
-    realEpisodes.value = episodes;
+    realAnime.value = anime
+    isFavorited.value = Boolean(anime.is_favorite)
+    realEpisodes.value = episodes
     filesByEpisode.value = Object.fromEntries(
       episodes.map((ep) => [
         ep.id,
         (ep.file_ids || []).map((id) => filesById.get(id)).filter(Boolean) as VideoFile[],
       ]),
-    );
+    )
 
-    const resumeIdx = episodes.findIndex((ep) => ep.ep === anime.last_watched_episode);
-    activeEpisodeIdx.value = Math.max(0, resumeIdx);
-    currentSourceIdx.value = 0;
+    const queryEpisodeId = getRouteEpisodeId()
+    const queryEpisodeIdx = queryEpisodeId
+      ? episodes.findIndex((ep) => ep.id === queryEpisodeId)
+      : -1
+    const resumeIdx = episodes.findIndex((ep) => ep.ep === anime.last_watched_episode)
+    activeEpisodeIdx.value = Math.max(0, queryEpisodeIdx >= 0 ? queryEpisodeIdx : resumeIdx)
+    currentSourceIdx.value = 0
     currentTime.value =
-      episodes[activeEpisodeIdx.value]?.watch_progress ||
-      anime.last_watched_position ||
-      0;
-    duration.value = episodes[activeEpisodeIdx.value]?.duration_seconds || 0;
-    await loadNote();
+      getRouteStartSeconds() ??
+      episodes[activeEpisodeIdx.value]?.watch_progress ??
+      anime.last_watched_position ??
+      0
+    duration.value = episodes[activeEpisodeIdx.value]?.duration_seconds || 0
+    await loadNote()
   } finally {
-    isLoading.value = false;
+    isLoading.value = false
   }
-};
+}
 
 const onLoadedMetadata = () => {
-  const video = videoRef.value;
-  if (!video) return;
+  const video = videoRef.value
+  if (!video) return
 
-  duration.value = Number.isFinite(video.duration) ? video.duration : 0;
-  const resumeAt = currentTime.value;
-  if (resumeAt > 0 && resumeAt < duration.value) video.currentTime = resumeAt;
-  video.volume = volume.value / 100;
-  video.muted = isMuted.value;
-};
+  duration.value = Number.isFinite(video.duration) ? video.duration : 0
+  const resumeAt = currentTime.value
+  if (resumeAt > 0 && resumeAt < duration.value) video.currentTime = resumeAt
+  video.volume = volume.value / 100
+  video.muted = isMuted.value
+}
 
 const onTimeUpdate = () => {
-  const video = videoRef.value;
-  if (!video || isSeeking.value) return;
+  const video = videoRef.value
+  if (!video || isSeeking.value) return
 
-  currentTime.value = video.currentTime;
-  if (Number.isFinite(video.duration)) duration.value = video.duration;
-  saveProgressThrottled();
-};
+  currentTime.value = video.currentTime
+  if (Number.isFinite(video.duration)) duration.value = video.duration
+  saveProgressThrottled()
+}
 
 const onPlay = () => {
-  isPlaying.value = true;
-};
+  isPlaying.value = true
+}
 
 const onPause = () => {
-  isPlaying.value = false;
-  void saveProgress();
-};
+  isPlaying.value = false
+  void saveProgress()
+}
 
 const onVideoError = () => {
-  isPlaying.value = false;
-  playbackError.value = 'Lite 暂不支持此视频格式或编码。若文件为 MKV/H.265，请使用浏览器支持的 MP4/H.264 或 WebM。';
-};
+  isPlaying.value = false
+  playbackError.value =
+    'Lite 暂不支持此视频格式或编码。若文件为 MKV/H.265，请使用浏览器支持的 MP4/H.264 或 WebM。'
+}
 
 onMounted(() => {
-  void loadTheatreData();
-});
+  void loadTheatreData()
+  requestAnimationFrame(updatePlayerFrame)
+  if (playerSectionRef.value && typeof ResizeObserver !== 'undefined') {
+    playerResizeObserver = new ResizeObserver(updatePlayerFrame)
+    playerResizeObserver.observe(playerSectionRef.value)
+  }
+  window.addEventListener('resize', updatePlayerFrame)
+})
 onUnmounted(() => {
-  void saveProgress();
-  void saveNote('笔记已自动保存');
-  revokePlaybackUrl(videoUrl.value);
-});
+  void saveProgress()
+  void saveNote('笔记已自动保存')
+  revokePlaybackUrl(videoUrl.value)
+  playerResizeObserver?.disconnect()
+  window.removeEventListener('resize', updatePlayerFrame)
+})
 
-watch(() => route.params.id, () => {
-  void loadTheatreData();
-});
+watch(
+  () => [route.params.id, route.query.episodeId, route.query.t],
+  () => {
+    void loadTheatreData()
+  },
+)
 
 watch([activeVideoFile, activeEpisodeIdx], () => {
-  void loadPlaybackUrl();
-});
+  void loadPlaybackUrl()
+})
 
 watch(noteTargetId, () => {
-  void loadNote();
-});
+  void loadNote()
+})
 
 watch(volume, (value) => {
-  if (videoRef.value) videoRef.value.volume = value / 100;
-});
+  if (videoRef.value) videoRef.value.volume = value / 100
+})
 </script>
 
 <template>
   <div class="theatre-view">
     <div class="theatre-container">
       <!-- Video Player Section -->
-      <section class="player-section">
-        <div class="video-container group">
+      <section ref="playerSectionRef" class="player-section">
+        <div class="video-container group" :style="playerFrameStyle">
           <video
             v-if="videoUrl"
             ref="videoRef"
@@ -507,12 +581,17 @@ watch(volume, (value) => {
             @ended="onPause"
             @error="onVideoError"
           ></video>
-          <img v-else-if="media.image" :src="media.image" :alt="media.title" class="video-placeholder" />
+          <img
+            v-else-if="media.image"
+            :src="media.image"
+            :alt="media.title"
+            class="video-placeholder"
+          />
           <div v-else class="video-empty">暂无视频预览</div>
           <div class="video-overlay" @click="togglePlay"></div>
           <div v-if="playbackError" class="playback-error">{{ playbackError }}</div>
           <div v-else-if="isLoading" class="playback-status">加载中...</div>
-          
+
           <!-- Play Button Overlay -->
           <button v-if="!isPlaying" class="master-play-btn-circular" @click="togglePlay">
             <Play :size="40" fill="currentColor" />
@@ -539,11 +618,11 @@ watch(volume, (value) => {
                 </div>
               </div>
             </div>
-            
+
             <div class="controls-bottom">
               <div class="controls-left">
-                <button 
-                  class="control-icon" 
+                <button
+                  class="control-icon"
                   @click="prevEpisode"
                   :disabled="activeEpisodeIdx === 0"
                   :class="{ disabled: activeEpisodeIdx === 0 }"
@@ -554,17 +633,19 @@ watch(volume, (value) => {
                   <Play v-if="!isPlaying" :size="24" fill="currentColor" />
                   <Pause v-else :size="24" fill="currentColor" />
                 </button>
-                <button 
-                  class="control-icon" 
+                <button
+                  class="control-icon"
                   @click="nextEpisode"
                   :disabled="activeEpisodeIdx === episodeRows.length - 1"
                   :class="{ disabled: activeEpisodeIdx === episodeRows.length - 1 }"
                 >
                   <SkipForward :size="20" fill="currentColor" />
                 </button>
-                <span class="time-display">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
+                <span class="time-display"
+                  >{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span
+                >
               </div>
-              
+
               <div class="controls-right">
                 <div class="source-wrapper">
                   <button class="source-picker" @click="toggleSourcePicker">
@@ -575,12 +656,14 @@ watch(volume, (value) => {
                     <button
                       v-for="(source, idx) in sourceOptions"
                       :key="idx"
-                      @click="currentSourceIdx = idx; isSourcePickerOpen = false"
+                      @click="selectSource(idx)"
                       :class="{ active: currentSourceIdx === idx }"
-                    >{{ source }}</button>
+                    >
+                      {{ source }}
+                    </button>
                   </div>
                 </div>
-                
+
                 <div class="volume-container">
                   <button class="control-icon" @click="toggleMute">
                     <Volume2 v-if="!isMuted" :size="20" />
@@ -590,7 +673,7 @@ watch(volume, (value) => {
                     <input type="range" v-model="volume" min="0" max="100" class="volume-slider" />
                   </div>
                 </div>
-                
+
                 <button class="control-icon" @click="toggleFullscreen">
                   <Maximize :size="20" />
                 </button>
@@ -601,135 +684,164 @@ watch(volume, (value) => {
       </section>
 
       <!-- Info & Episodes Grid -->
-      <div class="info-grid">
-        <!-- Metadata Area -->
-        <div class="metadata-area">
-          <header class="media-header">
-            <div class="title-wrap">
-              <h1 class="media-title">{{ media.title }}</h1>
-              <div class="tags">
-                <span v-for="tag in media.tags" :key="tag" class="tag">{{ tag }}</span>
-                <span class="meta-dot"></span>
-                <span>{{ media.year }}</span>
-                <span class="meta-dot"></span>
-                <span>{{ media.episodes }} 集</span>
-              </div>
-            </div>
-            <div class="score-wrap">
-              <span class="score-value">{{ media.score }}</span>
-              <span class="score-label">SCORE</span>
-            </div>
-          </header>
+      <button
+        class="drawer-toggle"
+        type="button"
+        :aria-expanded="isInfoDrawerOpen"
+        aria-label="Toggle info panel"
+        @click="isInfoDrawerOpen = !isInfoDrawerOpen"
+      >
+        <ChevronRight v-if="isInfoDrawerOpen" :size="22" />
+        <ChevronLeft v-else :size="22" />
+      </button>
 
-          <!-- NEW: Ratings & Favorite Section -->
-          <div class="user-interaction-bar">
-            <div class="favorite-action">
-              <span class="interaction-text">收藏</span>
-              <button 
-                class="plain-heart-btn" 
-                :class="{ active: isFavorited }"
-                @click="toggleFavorite"
-              >
-                <Heart :size="22" :fill="isFavorited ? '#c62828' : 'none'" :color="isFavorited ? '#c62828' : 'currentColor'" />
-              </button>
-            </div>
-            <div class="rating-action">
-              <span class="interaction-text">评分</span>
-              <div class="stars-list">
-                <button 
-                  v-for="i in 5" 
-                  :key="i"
-                  @click="rating = i"
-                  class="star-btn"
+      <section class="info-drawer" :class="{ open: isInfoDrawerOpen }">
+        <div class="info-grid">
+          <!-- Metadata Area -->
+          <div class="metadata-area">
+            <header class="media-header">
+              <div class="title-wrap">
+                <h1 class="media-title">{{ media.title }}</h1>
+                <div class="tags">
+                  <span v-for="tag in media.tags" :key="tag" class="tag">{{ tag }}</span>
+                  <span class="meta-dot"></span>
+                  <span>{{ media.year }}</span>
+                  <span class="meta-dot"></span>
+                  <span>{{ media.episodes }} 集</span>
+                </div>
+              </div>
+              <div class="score-wrap">
+                <span class="score-value">{{ media.score }}</span>
+                <span class="score-label">SCORE</span>
+              </div>
+            </header>
+
+            <!-- NEW: Ratings & Favorite Section -->
+            <div class="user-interaction-bar">
+              <div class="favorite-action">
+                <span class="interaction-text">收藏</span>
+                <button
+                  class="plain-heart-btn"
+                  :class="{ active: isFavorited }"
+                  @click="toggleFavorite"
                 >
-                  <Star 
-                    :size="20" 
-                    :fill="i <= rating ? 'url(#star-gradient)' : 'none'" 
-                    :color="i <= rating ? 'transparent' : 'currentColor'" 
+                  <Heart
+                    :size="22"
+                    :fill="isFavorited ? '#c62828' : 'none'"
+                    :color="isFavorited ? '#c62828' : 'currentColor'"
                   />
                 </button>
               </div>
-              <!-- SVG Gradient definition for stars -->
-              <svg width="0" height="0" class="absolute">
-                <defs>
-                  <linearGradient id="star-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" style="stop-color:var(--primary);stop-opacity:1" />
-                    <stop offset="100%" style="stop-color:var(--primary-container);stop-opacity:1" />
-                  </linearGradient>
-                </defs>
-              </svg>
-            </div>
-          </div>
-
-          <p class="media-desc">{{ media.desc }}</p>
-
-          <section class="notes-panel">
-            <header class="notes-header">
-              <h3>剧集笔记</h3>
-              <div class="notes-actions">
-                <button class="note-tool" @click="insertTimestampNote">时间戳</button>
-                <button class="note-tool" @click="captureScreenshotNote">截图</button>
-                <button class="note-save" @click="saveNote()">保存</button>
+              <div class="rating-action">
+                <span class="interaction-text">评分</span>
+                <div class="stars-list">
+                  <button v-for="i in 5" :key="i" @click="rating = i" class="star-btn">
+                    <Star
+                      :size="20"
+                      :fill="i <= rating ? 'url(#star-gradient)' : 'none'"
+                      :color="i <= rating ? 'transparent' : 'currentColor'"
+                    />
+                  </button>
+                </div>
+                <!-- SVG Gradient definition for stars -->
+                <svg width="0" height="0" class="absolute">
+                  <defs>
+                    <linearGradient id="star-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" style="stop-color: var(--primary); stop-opacity: 1" />
+                      <stop
+                        offset="100%"
+                        style="stop-color: var(--primary-container); stop-opacity: 1"
+                      />
+                    </linearGradient>
+                  </defs>
+                </svg>
               </div>
-            </header>
-            <textarea
-              v-model="noteText"
-              class="note-editor"
-              placeholder="记录这集的分镜、台词、感想..."
-            ></textarea>
-            <footer class="notes-footer">
-              <span v-if="noteAttachmentIds.length">附件 {{ noteAttachmentIds.length }} 个</span>
-              <span v-if="noteMessage">{{ noteMessage }}</span>
-            </footer>
-          </section>
-        </div>
+            </div>
 
-        <!-- Episodes List -->
-        <aside class="episodes-panel">
-          <h3 class="panel-title">选集</h3>
-          <div class="episodes-list">
-            <button
-              v-for="(ep, index) in episodeRows"
-              :key="ep.id"
-              class="episode-item"
-              :class="{ active: activeEpisodeIdx === index }"
-              @click="void setEpisode(index)"
-            >
-              <span class="ep-title">{{ ep.title }}</span>
-              <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
-              <PlayCircle v-if="activeEpisodeIdx === index" :size="16" class="active-dot-icon" />
-            </button>
+            <p class="media-desc">{{ media.desc }}</p>
+
+            <section class="notes-panel">
+              <header class="notes-header">
+                <h3>剧集笔记</h3>
+                <div class="notes-actions">
+                  <button class="note-tool" @click="goToAllNotes">全部笔记</button>
+                  <button class="note-tool" @click="insertTimestampNote">时间戳</button>
+                  <button class="note-tool" @click="captureScreenshotNote">截图</button>
+                  <button class="note-save" @click="saveNote()">保存</button>
+                </div>
+              </header>
+              <textarea
+                v-model="noteText"
+                class="note-editor"
+                placeholder="记录这集的分镜、台词、感想..."
+              ></textarea>
+              <footer class="notes-footer">
+                <span v-if="noteAttachmentIds.length">附件 {{ noteAttachmentIds.length }} 个</span>
+                <span v-if="noteMessage">{{ noteMessage }}</span>
+              </footer>
+            </section>
           </div>
-        </aside>
-      </div>
+
+          <!-- Episodes List -->
+          <aside class="episodes-panel">
+            <h3 class="panel-title">选集</h3>
+            <div class="episodes-list">
+              <button
+                v-for="(ep, index) in episodeRows"
+                :key="ep.id"
+                class="episode-item"
+                :class="{ active: activeEpisodeIdx === index }"
+                @click="void setEpisode(index)"
+              >
+                <span class="ep-title">{{ ep.title }}</span>
+                <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
+                <PlayCircle v-if="activeEpisodeIdx === index" :size="16" class="active-dot-icon" />
+              </button>
+            </div>
+          </aside>
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
 .theatre-view {
-  min-height: 100vh;
-  padding-bottom: 64px;
+  min-height: calc(100vh - 108px);
+  padding-bottom: 0;
 }
 
 .theatre-container {
-  max-width: 1200px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 360px);
+  gap: 24px;
+  align-items: stretch;
+  width: 100%;
+  max-width: none;
+  height: calc(100vh - 108px);
+  min-height: 420px;
   margin: 0 auto;
 }
 
 /* Player Section */
 .player-section {
-  margin-bottom: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: 0;
 }
 
 .video-container {
   position: relative;
-  width: 100%;
+  flex: 0 1 auto;
+  max-width: 100%;
   aspect-ratio: 16 / 9;
   background-color: #000;
-  border-radius: 24px;
+  border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 32px 64px rgba(0,0,0,0.4);
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.4);
 }
 
 .video-placeholder {
@@ -871,7 +983,7 @@ watch(volume, (value) => {
   background: white;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   border: none;
   transition: all 0.2s ease;
 }
@@ -889,7 +1001,7 @@ watch(volume, (value) => {
   background: white;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   border: none;
   transition: all 0.2s ease;
 }
@@ -905,7 +1017,8 @@ watch(volume, (value) => {
   justify-content: space-between;
 }
 
-.controls-left, .controls-right {
+.controls-left,
+.controls-right {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -953,6 +1066,7 @@ watch(volume, (value) => {
   display: flex;
   align-items: center;
   gap: 6px;
+  max-width: 220px;
   background-color: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.15);
   padding: 6px 14px;
@@ -961,6 +1075,13 @@ watch(volume, (value) => {
   font-size: 12px;
   font-weight: 600;
   transition: all 0.2s ease;
+}
+
+.source-picker span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-picker:hover {
@@ -979,7 +1100,7 @@ watch(volume, (value) => {
   flex-direction: column;
   gap: 4px;
   min-width: 100px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   z-index: 40;
 }
 
@@ -993,7 +1114,7 @@ watch(volume, (value) => {
 }
 
 .source-dropdown button:hover {
-  background: rgba(255,255,255,0.1);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .source-dropdown button.active {
@@ -1029,7 +1150,12 @@ watch(volume, (value) => {
   border-radius: 2px;
   outline: none;
   cursor: pointer;
-  background-image: linear-gradient(to right, white 0%, white v-bind('volume + "%"'), transparent v-bind('volume + "%"')) !important;
+  background-image: linear-gradient(
+    to right,
+    white 0%,
+    white v-bind('volume + "%"'),
+    transparent v-bind('volume + "%"')
+  ) !important;
 }
 
 .volume-slider::-webkit-slider-thumb {
@@ -1039,7 +1165,7 @@ watch(volume, (value) => {
   background: white;
   border-radius: 50%;
   transition: transform 0.2s;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
   margin-top: -4px; /* Center dot on 4px track */
 }
 
@@ -1048,7 +1174,7 @@ watch(volume, (value) => {
   height: 12px;
   background: white;
   border-radius: 50%;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
   border: none;
 }
 
@@ -1057,35 +1183,43 @@ watch(volume, (value) => {
 }
 
 /* Info Grid */
-.info-grid {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 64px;
+.drawer-toggle {
+  display: none;
 }
 
-@media (max-width: 1024px) {
-  .info-grid {
-    grid-template-columns: 1fr;
-    gap: 40px;
-  }
+.info-drawer {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .media-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 24px;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .media-title {
-  font-size: 40px;
+  font-size: clamp(24px, 2vw, 30px);
   font-weight: 800;
-  letter-spacing: -1px;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
 }
 
 .tags {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
   font-size: 14px;
@@ -1117,7 +1251,7 @@ watch(volume, (value) => {
 }
 
 .score-value {
-  font-size: 44px;
+  font-size: 34px;
   font-weight: 800;
   color: var(--primary);
   line-height: 1;
@@ -1134,13 +1268,15 @@ watch(volume, (value) => {
 .user-interaction-bar {
   display: flex;
   align-items: center;
-  gap: 40px;
-  margin-bottom: 32px;
-  padding-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid var(--outline-variant);
 }
 
-.favorite-action, .rating-action {
+.favorite-action,
+.rating-action {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1179,15 +1315,16 @@ watch(volume, (value) => {
 }
 
 .media-desc {
-  font-size: 16px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--on-surface-variant);
+  overflow-wrap: anywhere;
 }
 
 .notes-panel {
-  margin-top: 32px;
+  margin-top: 24px;
   border-top: 1px solid var(--outline-variant);
-  padding-top: 24px;
+  padding-top: 20px;
 }
 
 .notes-header,
@@ -1199,13 +1336,15 @@ watch(volume, (value) => {
 }
 
 .notes-header h3 {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .notes-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -1229,7 +1368,7 @@ watch(volume, (value) => {
 
 .note-editor {
   width: 100%;
-  min-height: 180px;
+  min-height: 150px;
   margin-top: 16px;
   padding: 16px;
   resize: vertical;
@@ -1255,23 +1394,23 @@ watch(volume, (value) => {
 /* Episodes Panel */
 .episodes-panel {
   background-color: var(--surface);
-  border-radius: 24px;
-  padding: 32px;
+  border-radius: 18px;
+  padding: 20px;
   box-shadow: var(--shadow-ambient);
   height: fit-content;
 }
 
 .panel-title {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .episodes-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 400px;
+  max-height: 320px;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -1281,8 +1420,10 @@ watch(volume, (value) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 16px;
-  border-radius: 12px;
+  gap: 8px;
+  min-height: 44px;
+  padding: 12px 14px;
+  border-radius: 10px;
   font-size: 14px;
   font-weight: 600;
   color: var(--on-surface-variant);
@@ -1301,23 +1442,160 @@ watch(volume, (value) => {
 }
 
 .active-dot-icon {
+  flex-shrink: 0;
   color: var(--primary); /* Restored to primary but maybe bold it or similar */
   filter: drop-shadow(0 0 5px var(--primary));
 }
 
 .ep-title {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ep-progress {
+  flex-shrink: 0;
   margin-right: 8px;
   font-size: 12px;
   color: var(--on-surface-variant);
   opacity: 0.7;
 }
 
+@media (max-width: 1180px) {
+  .theatre-container {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .drawer-toggle {
+    position: fixed;
+    top: 50%;
+    right: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 72px;
+    color: var(--on-surface);
+    background-color: var(--surface);
+    border: 1px solid var(--outline-variant);
+    border-right: 0;
+    border-radius: 14px 0 0 14px;
+    box-shadow: -8px 12px 32px rgba(0, 0, 0, 0.12);
+    transform: translateY(-50%);
+  }
+
+  .drawer-toggle:hover {
+    color: var(--primary);
+  }
+
+  .info-drawer {
+    position: fixed;
+    top: 60px;
+    right: 0;
+    z-index: 70;
+    width: min(360px, calc(100vw - 56px));
+    height: calc(100vh - 60px);
+    padding: 24px 16px 24px 20px;
+    background-color: var(--background);
+    box-shadow: -24px 0 48px rgba(0, 0, 0, 0.18);
+    transform: translateX(100%);
+    transition: transform 0.28s ease;
+  }
+
+  .info-drawer.open {
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .theatre-view,
+  .theatre-container {
+    min-height: calc(100vh - 108px);
+  }
+
+  .video-container {
+    border-radius: 12px;
+  }
+
+  .video-controls {
+    padding: 16px;
+  }
+
+  .controls-bottom {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .controls-left,
+  .controls-right {
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .controls-right {
+    flex: 1;
+    justify-content: flex-end;
+  }
+
+  .source-picker {
+    max-width: 160px;
+    padding: 6px 10px;
+  }
+
+  .time-display {
+    margin-left: 0;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .volume-slider-wrap {
+    display: none;
+  }
+
+  .master-play-btn-circular {
+    width: 64px;
+    height: 64px;
+  }
+
+  .playback-error,
+  .playback-status {
+    top: 16px;
+    right: 16px;
+    left: 16px;
+    font-size: 12px;
+  }
+
+  .drawer-toggle {
+    width: 40px;
+    height: 64px;
+  }
+
+  .info-drawer {
+    width: min(340px, calc(100vw - 48px));
+    padding: 20px 14px 20px 18px;
+  }
+
+  .media-header,
+  .notes-header,
+  .notes-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .score-wrap {
+    align-items: flex-start;
+  }
+
+  .notes-actions {
+    justify-content: flex-start;
+  }
+}
+
 /* Range input overrides */
-input[type="range"] {
+input[type='range'] {
   width: 100%;
   height: 4px;
   border-radius: 2px;
@@ -1325,13 +1603,13 @@ input[type="range"] {
   background: transparent;
 }
 
-input[type="range"]::-webkit-slider-thumb {
+input[type='range']::-webkit-slider-thumb {
   appearance: none;
   width: 12px;
   height: 12px;
   background: white;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
 }
 </style>

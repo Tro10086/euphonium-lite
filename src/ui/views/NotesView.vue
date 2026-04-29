@@ -1,0 +1,1768 @@
+<script setup lang="ts">
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  ArrowUpDown,
+  Bold,
+  CheckSquare,
+  CheckCircle2,
+  ChevronLeft,
+  Clock,
+  Code2,
+  Columns2,
+  Edit3,
+  Eye,
+  FileText,
+  Heading1,
+  Italic,
+  Link,
+  List,
+  ListOrdered,
+  Loader2,
+  Plus,
+  Quote,
+  RotateCcw,
+  Save,
+  Search,
+  Square,
+  Trash2,
+  X,
+} from 'lucide-vue-next'
+import type { Anime, Episode } from '@/models/Anime'
+import type { Note, NoteTargetType, TipTapJSON } from '@/models/Note'
+import { notesAPI } from '@/services/notes'
+import { animeAPI, episodeAPI } from '@/services/storage'
+import { uiState } from '@/ui/stores/uiState'
+import BaseModal from '@/ui/components/BaseModal.vue'
+
+type SortMode = 'updated' | 'episode' | 'wordCount'
+type EditorMode = 'edit' | 'split' | 'preview'
+
+interface TimeAnchor {
+  label: string
+  seconds: number
+}
+
+interface NoteCard {
+  note: Note
+  anime: Anime
+  episode?: Episode
+  title: string
+  targetLabel: string
+  excerpt: string
+  fullText: string
+  wordCount: number
+  attachmentCount: number
+  anchors: TimeAnchor[]
+  updatedAt: Date | null
+  deletedAt: Date | null
+  sortEpisode: number
+}
+
+const route = useRoute()
+const router = useRouter()
+
+const animes = ref<Anime[]>([])
+const episodes = ref<Episode[]>([])
+const notes = ref<Note[]>([])
+const selectedAnimeId = ref('')
+const searchQuery = ref('')
+const trashMode = ref(false)
+const selectionMode = ref(false)
+const selectedNoteIds = ref<Set<string>>(new Set())
+const sortMode = ref<SortMode>('updated')
+const activeNoteId = ref<string | null>(null)
+const isCreating = ref(false)
+const editorText = ref('')
+const editorMessage = ref('')
+const draftTargetKey = ref('')
+const isLoading = ref(false)
+const editorMode = ref<EditorMode>('split')
+const editorTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const saveStatus = ref<'idle' | 'saving' | 'saved'>('idle')
+const deleteDialogOpen = ref(false)
+const deleteDialogTitle = ref('删除笔记')
+const deleteDialogMessage = ref('')
+const pendingDeleteAction = ref<(() => Promise<void>) | null>(null)
+let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
+
+const sortOptions: Array<{ value: SortMode; label: string; shortLabel: string }> = [
+  { value: 'updated', label: '按时间', shortLabel: '时间' },
+  { value: 'episode', label: '按集数', shortLabel: '集数' },
+  { value: 'wordCount', label: '按字数', shortLabel: '字数' },
+]
+
+const sortLabel = computed(
+  () => sortOptions.find((option) => option.value === sortMode.value)?.label ?? '排序',
+)
+const sortShortLabel = computed(
+  () => sortOptions.find((option) => option.value === sortMode.value)?.shortLabel ?? '更新时间',
+)
+
+const animeById = computed(() => new Map(animes.value.map((anime) => [anime.id, anime])))
+const episodeById = computed(() => new Map(episodes.value.map((episode) => [episode.id, episode])))
+const episodesByAnimeId = computed(() => {
+  const grouped = new Map<string, Episode[]>()
+  for (const episode of episodes.value) {
+    const list = grouped.get(episode.anime_id) ?? []
+    list.push(episode)
+    grouped.set(episode.anime_id, list)
+  }
+
+  for (const list of grouped.values()) {
+    list.sort((a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep))
+  }
+
+  return grouped
+})
+
+const allCards = computed<NoteCard[]>(() => {
+  const cards: NoteCard[] = []
+
+  for (const note of notes.value) {
+    const context = resolveNoteContext(note)
+    if (!context) continue
+
+    const text = note.plainText || plainTextFromTipTapJson(note.tiptapJson)
+    const excerpt = createExcerpt(text)
+    const episodeLabel = context.episode ? `第 ${context.episode.ep} 集` : '动画总笔记'
+
+    cards.push({
+      note,
+      anime: context.anime,
+      episode: context.episode,
+      title: context.episode
+        ? context.episode.name_cn || context.episode.name || `第 ${context.episode.ep} 集`
+        : '动画总笔记',
+      targetLabel: episodeLabel,
+      excerpt,
+      fullText: text,
+      wordCount: countWords(text),
+      attachmentCount: note.attachmentIds.length,
+      anchors: parseTimeAnchors(text, context.episode?.duration_seconds),
+      updatedAt: toDate(note.updated_at),
+      deletedAt: toDate(note.deleted_at),
+      sortEpisode: context.episode ? (context.episode.sort ?? context.episode.ep) : 0,
+    })
+  }
+
+  return cards
+})
+
+const animeItems = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+
+  return animes.value
+    .filter((anime) => !anime.purge_requested_at)
+    .map((anime) => {
+      const cards = allCards.value.filter((card) => card.anime.id === anime.id)
+      const activeCards = cards.filter((card) => !card.deletedAt)
+      const deletedCards = cards.filter((card) => card.deletedAt)
+      const modeCards = trashMode.value ? deletedCards : activeCards
+      const recentTime = Math.max(
+        0,
+        ...modeCards.map((card) => card.updatedAt?.getTime() ?? 0),
+        toDate(anime.updated_at)?.getTime() ?? 0,
+      )
+
+      return {
+        anime,
+        title: animeTitle(anime),
+        aliases: anime.aliases ?? [],
+        noteCount: modeCards.length,
+        activeCount: activeCards.length,
+        deletedCount: deletedCards.length,
+        recentTime,
+      }
+    })
+    .filter((item) => {
+      if (trashMode.value && item.deletedCount === 0) return false
+      if (!query) return true
+      const haystack = [item.title, item.anime.name, ...item.aliases]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(query)
+    })
+    .sort((a, b) => b.recentTime - a.recentTime || a.title.localeCompare(b.title, 'zh-Hans-CN'))
+})
+
+const selectedAnime = computed(() => animeById.value.get(selectedAnimeId.value) ?? null)
+const selectedAnimeEpisodes = computed(
+  () => episodesByAnimeId.value.get(selectedAnimeId.value) ?? [],
+)
+
+const currentCards = computed(() => {
+  const deleted = trashMode.value
+  const cards = allCards.value.filter(
+    (card) => card.anime.id === selectedAnimeId.value && Boolean(card.deletedAt) === deleted,
+  )
+
+  if (sortMode.value === 'episode') {
+    return [...cards].sort((a, b) => a.sortEpisode - b.sortEpisode || compareUpdatedDesc(a, b))
+  }
+
+  if (sortMode.value === 'wordCount') {
+    return [...cards].sort((a, b) => b.wordCount - a.wordCount || compareUpdatedDesc(a, b))
+  }
+
+  return [...cards].sort(compareUpdatedDesc)
+})
+
+const targetNoteByKey = computed(() => {
+  const map = new Map<string, NoteCard>()
+  for (const card of allCards.value) {
+    if (card.anime.id !== selectedAnimeId.value || card.deletedAt) continue
+    map.set(`${card.note.targetType}:${card.note.targetId}`, card)
+  }
+  return map
+})
+
+const newTargetOptions = computed(() => {
+  const anime = selectedAnime.value
+  if (!anime) return []
+
+  return [
+    {
+      key: `anime:${anime.id}`,
+      label: '动画总笔记',
+      hasNote: targetNoteByKey.value.has(`anime:${anime.id}`),
+    },
+    ...selectedAnimeEpisodes.value.map((episode) => ({
+      key: `episode:${episode.id}`,
+      label: `第 ${episode.ep} 集 ${episode.name_cn || episode.name || ''}`.trim(),
+      hasNote: targetNoteByKey.value.has(`episode:${episode.id}`),
+    })),
+  ]
+})
+
+const activeCard = computed(() =>
+  activeNoteId.value
+    ? (allCards.value.find((card) => card.note.id === activeNoteId.value) ?? null)
+    : null,
+)
+
+const isEditorOpen = computed(() => isCreating.value || Boolean(activeCard.value))
+const editorTitle = computed(() => {
+  if (isCreating.value) return '新建笔记'
+  return activeCard.value?.title ?? '笔记'
+})
+const editorEpisodeLabel = computed(() => {
+  if (isCreating.value) {
+    return newTargetOptions.value.find((option) => option.key === draftTargetKey.value)?.label ?? ''
+  }
+  return activeCard.value?.targetLabel ?? ''
+})
+const editorEpisode = computed(() => {
+  if (activeCard.value?.episode) return activeCard.value.episode
+  if (!isCreating.value) return undefined
+
+  const target = parseTargetKey(draftTargetKey.value)
+  if (target?.targetType !== 'episode') return undefined
+  return episodeById.value.get(target.targetId)
+})
+const editorAnchors = computed(() =>
+  parseTimeAnchors(editorText.value, editorEpisode.value?.duration_seconds),
+)
+const editorPreviewHtml = computed(() => renderMarkdown(editorText.value))
+const editorWordCount = computed(() => countWords(editorText.value))
+const selectedCount = computed(() => selectedNoteIds.value.size)
+
+function animeTitle(anime: Anime) {
+  return anime.name_cn || anime.name || '未命名动画'
+}
+
+function toDate(value: Date | string | number | null | undefined) {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function compareUpdatedDesc(a: NoteCard, b: NoteCard) {
+  return (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0)
+}
+
+function resolveNoteContext(note: Note) {
+  if (note.targetType === 'anime') {
+    const anime = animeById.value.get(note.targetId)
+    return anime ? { anime } : null
+  }
+
+  if (note.targetType === 'episode') {
+    const episode = episodeById.value.get(note.targetId)
+    const anime = episode ? animeById.value.get(episode.anime_id) : undefined
+    return anime && episode ? { anime, episode } : null
+  }
+
+  return null
+}
+
+function plainTextFromTipTapJson(json: TipTapJSON): string {
+  const lines: string[] = []
+  const walk = (node: TipTapJSON) => {
+    if (node.type === 'paragraph') {
+      lines.push((node.content ?? []).map((child) => child.text ?? '').join(''))
+      return
+    }
+    for (const child of node.content ?? []) walk(child)
+  }
+  walk(json)
+  return lines.join('\n').trim()
+}
+
+function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
+  const paragraphs: TipTapJSON[] = text.split('\n').map((line) => ({
+    type: 'paragraph',
+    content: line ? [{ type: 'text', text: line }] : [],
+  }))
+
+  const images: TipTapJSON[] = attachmentIds.map((attachmentId) => ({
+    type: 'image',
+    attrs: { attachmentId },
+  }))
+
+  return {
+    type: 'doc',
+    content: [...paragraphs, ...images],
+  }
+}
+
+function createExcerpt(text: string) {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  return normalized || '空白笔记'
+}
+
+function countWords(text: string) {
+  return text.replace(/\s/g, '').length
+}
+
+function parseTimeAnchors(text: string, maxSeconds?: number): TimeAnchor[] {
+  const anchors: TimeAnchor[] = []
+  const seen = new Set<string>()
+  const regex = /\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]/g
+  let match: RegExpExecArray | null
+
+  while ((match = regex.exec(text)) && anchors.length < 12) {
+    const hours = match[1] ? Number(match[1]) : 0
+    const minutes = Number(match[2])
+    const seconds = Number(match[3])
+    if (!Number.isFinite(minutes) || !Number.isFinite(seconds) || seconds > 59) continue
+
+    const totalSeconds = hours * 3600 + minutes * 60 + seconds
+    if (maxSeconds && totalSeconds > maxSeconds) continue
+
+    const label = match[0]
+    const key = `${label}:${totalSeconds}`
+    if (seen.has(key)) continue
+
+    seen.add(key)
+    anchors.push({ label, seconds: totalSeconds })
+  }
+
+  return anchors
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function renderInlineMarkdown(value: string) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+    )
+}
+
+function renderMarkdown(markdown: string) {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const html: string[] = []
+  let inCodeBlock = false
+  let listType: 'ul' | 'ol' | null = null
+
+  const closeList = () => {
+    if (!listType) return
+    html.push(`</${listType}>`)
+    listType = null
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd()
+
+    if (line.startsWith('```')) {
+      closeList()
+      html.push(inCodeBlock ? '</code></pre>' : '<pre><code>')
+      inCodeBlock = !inCodeBlock
+      continue
+    }
+
+    if (inCodeBlock) {
+      html.push(`${escapeHtml(rawLine)}\n`)
+      continue
+    }
+
+    if (!line.trim()) {
+      closeList()
+      continue
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/)
+    if (heading) {
+      closeList()
+      const marker = heading[1] ?? '#'
+      const content = heading[2] ?? ''
+      const level = marker.length
+      html.push(`<h${level}>${renderInlineMarkdown(content)}</h${level}>`)
+      continue
+    }
+
+    if (/^>\s+/.test(line)) {
+      closeList()
+      html.push(`<blockquote>${renderInlineMarkdown(line.replace(/^>\s+/, ''))}</blockquote>`)
+      continue
+    }
+
+    const unordered = line.match(/^[-*]\s+(.+)$/)
+    if (unordered) {
+      if (listType !== 'ul') {
+        closeList()
+        listType = 'ul'
+        html.push('<ul>')
+      }
+      html.push(`<li>${renderInlineMarkdown(unordered[1] ?? '')}</li>`)
+      continue
+    }
+
+    const ordered = line.match(/^\d+\.\s+(.+)$/)
+    if (ordered) {
+      if (listType !== 'ol') {
+        closeList()
+        listType = 'ol'
+        html.push('<ol>')
+      }
+      html.push(`<li>${renderInlineMarkdown(ordered[1] ?? '')}</li>`)
+      continue
+    }
+
+    closeList()
+    html.push(`<p>${renderInlineMarkdown(line)}</p>`)
+  }
+
+  closeList()
+  if (inCodeBlock) html.push('</code></pre>')
+  return html.join('\n')
+}
+
+function formatDate(value: Date | null) {
+  if (!value) return '未知时间'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(value)
+}
+
+function parseTargetKey(key: string): { targetType: NoteTargetType; targetId: string } | null {
+  const [targetType, targetId] = key.split(':')
+  if ((targetType !== 'anime' && targetType !== 'episode') || !targetId) return null
+  return { targetType, targetId }
+}
+
+async function refreshData() {
+  isLoading.value = true
+  try {
+    const [animeRows, episodeRows, noteRows] = await Promise.all([
+      animeAPI.getAll(),
+      episodeAPI.getAll(),
+      notesAPI.getAll(),
+    ])
+    animes.value = animeRows
+    episodes.value = episodeRows
+    notes.value = noteRows
+  } finally {
+    isLoading.value = false
+  }
+}
+
+function ensureSelectedAnime() {
+  const routeAnimeId = typeof route.query.animeId === 'string' ? route.query.animeId : ''
+  const visibleIds = new Set(animeItems.value.map((item) => item.anime.id))
+
+  if (routeAnimeId && visibleIds.has(routeAnimeId)) {
+    selectedAnimeId.value = routeAnimeId
+    return
+  }
+
+  if (selectedAnimeId.value && visibleIds.has(selectedAnimeId.value)) return
+
+  selectedAnimeId.value = animeItems.value[0]?.anime.id ?? ''
+}
+
+function selectAnime(id: string) {
+  selectedAnimeId.value = id
+  closeEditor()
+  clearSelection()
+}
+
+function cycleSort() {
+  const index = sortOptions.findIndex((option) => option.value === sortMode.value)
+  sortMode.value = sortOptions[(index + 1) % sortOptions.length]?.value ?? 'updated'
+}
+
+function startCreate() {
+  if (!selectedAnime.value) return
+
+  const target = newTargetOptions.value.find((option) => !option.hasNote)
+  if (!target) {
+    editorMessage.value = '这个动画下已有可编辑笔记'
+    const firstCard = currentCards.value[0]
+    if (firstCard) openEditor(firstCard)
+    return
+  }
+
+  activeNoteId.value = null
+  isCreating.value = true
+  editorText.value = ''
+  editorMessage.value = ''
+  draftTargetKey.value = target.key
+  editorMode.value = 'split'
+  clearSelection()
+}
+
+function openEditor(card: NoteCard) {
+  if (trashMode.value || selectionMode.value) {
+    toggleNoteSelection(card.note.id)
+    return
+  }
+
+  activeNoteId.value = card.note.id
+  isCreating.value = false
+  editorText.value = card.fullText
+  editorMessage.value = ''
+  editorMode.value = 'split'
+  clearSelection()
+}
+
+function closeEditor() {
+  activeNoteId.value = null
+  isCreating.value = false
+  editorText.value = ''
+  editorMessage.value = ''
+}
+
+async function saveEditor() {
+  const existingCard = activeCard.value
+  const target = isCreating.value
+    ? parseTargetKey(draftTargetKey.value)
+    : existingCard
+      ? { targetType: existingCard.note.targetType, targetId: existingCard.note.targetId }
+      : null
+
+  if (!target) return
+  if (isCreating.value && !editorText.value.trim()) {
+    editorMessage.value = '笔记内容为空'
+    return
+  }
+
+  setSaveStatus('saving')
+  const existingTargetCard = targetNoteByKey.value.get(`${target.targetType}:${target.targetId}`)
+  const noteId = existingCard?.note.id ?? existingTargetCard?.note.id
+  const attachmentIds =
+    existingCard?.note.attachmentIds ?? existingTargetCard?.note.attachmentIds ?? []
+
+  const savedId = await notesAPI.save({
+    id: noteId,
+    targetType: target.targetType,
+    targetId: target.targetId,
+    tiptapJson: textToTipTapJson(editorText.value, attachmentIds),
+    plainText: editorText.value,
+    attachmentIds,
+  })
+
+  activeNoteId.value = savedId
+  isCreating.value = false
+  editorMessage.value = ''
+  await refreshData()
+  setSaveStatus('saved')
+}
+
+function clearSaveStatusTimer() {
+  if (!saveStatusTimer) return
+  clearTimeout(saveStatusTimer)
+  saveStatusTimer = null
+}
+
+function setSaveStatus(status: 'idle' | 'saving' | 'saved') {
+  clearSaveStatusTimer()
+  saveStatus.value = status
+  if (status === 'saved') {
+    saveStatusTimer = setTimeout(() => {
+      saveStatus.value = 'idle'
+      saveStatusTimer = null
+    }, 3000)
+  }
+}
+
+function clearSelection() {
+  selectedNoteIds.value = new Set()
+  selectionMode.value = false
+}
+
+function toggleSelectionMode() {
+  selectionMode.value = !selectionMode.value
+  selectedNoteIds.value = new Set()
+}
+
+function toggleNoteSelection(id: string) {
+  const next = new Set(selectedNoteIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedNoteIds.value = next
+}
+
+function setEditorMode(mode: EditorMode) {
+  editorMode.value = mode
+}
+
+function insertMarkdown(prefix: string, suffix = '', placeholder = '') {
+  const textarea = editorTextareaRef.value
+  if (!textarea) {
+    editorText.value += `${prefix}${placeholder}${suffix}`
+    return
+  }
+
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const selected = editorText.value.slice(start, end) || placeholder
+  editorText.value = `${editorText.value.slice(0, start)}${prefix}${selected}${suffix}${editorText.value.slice(end)}`
+
+  void nextTick(() => {
+    textarea.focus()
+    const selectionStart = start + prefix.length
+    const selectionEnd = selectionStart + selected.length
+    textarea.setSelectionRange(selectionStart, selectionEnd)
+  })
+}
+
+function insertLine(prefix: string) {
+  const textarea = editorTextareaRef.value
+  if (!textarea) {
+    editorText.value += `${prefix}`
+    return
+  }
+
+  const start = textarea.selectionStart
+  const lineStart = editorText.value.lastIndexOf('\n', Math.max(0, start - 1)) + 1
+  editorText.value = `${editorText.value.slice(0, lineStart)}${prefix}${editorText.value.slice(lineStart)}`
+
+  void nextTick(() => {
+    textarea.focus()
+    const position = lineStart + prefix.length
+    textarea.setSelectionRange(position, position)
+  })
+}
+
+function insertTimestamp() {
+  insertMarkdown('[00:00]')
+}
+
+async function softDeleteSelected() {
+  const ids = Array.from(selectedNoteIds.value)
+  if (ids.length === 0) return
+  openDeleteDialog({
+    title: '删除笔记',
+    message: `确定要删除选中的 ${ids.length} 条笔记吗？删除后可在当前动画的回收站恢复。`,
+    action: async () => {
+      await Promise.all(ids.map((id) => notesAPI.softDelete(id)))
+      if (activeNoteId.value && ids.includes(activeNoteId.value)) closeEditor()
+      clearSelection()
+      await refreshData()
+    },
+  })
+}
+
+async function softDeleteActiveNote() {
+  const card = activeCard.value
+  if (!card) return
+  openDeleteDialog({
+    title: '删除笔记',
+    message: `确定要删除「${card.title}」吗？删除后可在当前动画的回收站恢复。`,
+    action: async () => {
+      await notesAPI.softDelete(card.note.id)
+      closeEditor()
+      await refreshData()
+    },
+  })
+}
+
+async function restoreSelected() {
+  const ids = Array.from(selectedNoteIds.value)
+  if (ids.length === 0) return
+
+  await Promise.all(ids.map((id) => notesAPI.restore(id)))
+  clearSelection()
+  await refreshData()
+}
+
+async function deleteSelectedPermanently() {
+  const ids = Array.from(selectedNoteIds.value)
+  if (ids.length === 0) return
+  openDeleteDialog({
+    title: '彻底删除',
+    message: `确定要彻底删除选中的 ${ids.length} 条笔记吗？此操作不可恢复。`,
+    action: async () => {
+      await Promise.all(ids.map((id) => notesAPI.deletePermanently(id)))
+      clearSelection()
+      await refreshData()
+    },
+  })
+}
+
+function openDeleteDialog(options: {
+  title: string
+  message: string
+  action: () => Promise<void>
+}) {
+  deleteDialogTitle.value = options.title
+  deleteDialogMessage.value = options.message
+  pendingDeleteAction.value = options.action
+  deleteDialogOpen.value = true
+}
+
+async function confirmDeleteDialog() {
+  const action = pendingDeleteAction.value
+  deleteDialogOpen.value = false
+  pendingDeleteAction.value = null
+  if (action) await action()
+}
+
+function cancelDeleteDialog() {
+  deleteDialogOpen.value = false
+  pendingDeleteAction.value = null
+}
+
+function toggleTrashMode() {
+  trashMode.value = !trashMode.value
+  closeEditor()
+  clearSelection()
+  ensureSelectedAnime()
+}
+
+function openTheatreAt(card: NoteCard | null, seconds: number) {
+  if (!card) return
+
+  const query: Record<string, string> = { t: String(seconds) }
+  if (card.episode) query.episodeId = card.episode.id
+
+  const href = router.resolve({
+    name: 'theatre',
+    params: { id: card.anime.id },
+    query,
+  }).href
+  window.open(href, '_blank', 'noopener')
+}
+
+watch(animeItems, ensureSelectedAnime)
+watch(() => route.query.animeId, ensureSelectedAnime)
+
+onMounted(async () => {
+  await refreshData()
+  ensureSelectedAnime()
+})
+
+onUnmounted(() => {
+  clearSaveStatusTimer()
+})
+</script>
+
+<template>
+  <div class="notes-page">
+    <div class="notes-view">
+      <aside class="anime-column">
+        <div class="anime-search">
+          <Search :size="18" class="search-icon" />
+          <input v-model="searchQuery" type="text" placeholder="搜索动画..." class="search-input" />
+        </div>
+
+        <div class="anime-list">
+          <button
+            v-for="item in animeItems"
+            :key="item.anime.id"
+            class="anime-item"
+            :class="{ active: selectedAnimeId === item.anime.id }"
+            :title="item.title"
+            @click="selectAnime(item.anime.id)"
+          >
+            <span class="anime-name">{{ item.title }}</span>
+            <span class="anime-count">{{ trashMode ? item.deletedCount : item.activeCount }}</span>
+          </button>
+        </div>
+      </aside>
+
+      <section class="notes-workspace">
+        <header v-if="!isEditorOpen" class="notes-toolbar">
+          <div class="toolbar-title">
+            <span class="mode-label">{{ trashMode ? '回收站' : '笔记' }}</span>
+            <h1 :title="selectedAnime ? animeTitle(selectedAnime) : ''">
+              {{ selectedAnime ? animeTitle(selectedAnime) : '暂无动画' }}
+            </h1>
+          </div>
+
+          <div class="toolbar-actions header-actions">
+            <button v-if="trashMode" class="tool-btn" @click="toggleTrashMode">
+              <X :size="16" />
+              <span>退出</span>
+            </button>
+            <button v-else class="tool-btn" :disabled="!selectedAnime" @click="startCreate">
+              <Plus :size="16" />
+              <span>新建</span>
+            </button>
+
+            <button class="tool-btn" :title="sortLabel" @click="cycleSort">
+              <ArrowUpDown :size="16" />
+              <span>按{{ sortShortLabel }}排序</span>
+            </button>
+
+            <button
+              class="tool-btn"
+              :class="{ active: selectionMode }"
+              @click="toggleSelectionMode"
+            >
+              <CheckSquare v-if="selectionMode" :size="16" />
+              <Square v-else :size="16" />
+              <span>多选</span>
+            </button>
+
+            <button
+              v-if="trashMode"
+              class="tool-btn"
+              :disabled="selectedCount === 0"
+              @click="restoreSelected"
+            >
+              <RotateCcw :size="16" />
+              <span>恢复</span>
+            </button>
+            <button
+              v-else
+              class="tool-btn danger"
+              :disabled="selectedCount === 0"
+              @click="softDeleteSelected"
+            >
+              <Trash2 :size="16" />
+              <span>删除</span>
+            </button>
+
+            <button
+              v-if="trashMode"
+              class="tool-btn danger"
+              :disabled="selectedCount === 0"
+              @click="deleteSelectedPermanently"
+            >
+              <Trash2 :size="16" />
+              <span>彻底删除</span>
+            </button>
+            <button v-else class="tool-btn" :class="{ active: trashMode }" @click="toggleTrashMode">
+              <Trash2 :size="16" />
+              <span>回收站</span>
+            </button>
+          </div>
+        </header>
+
+        <div v-if="isEditorOpen" class="editor-layout">
+          <header class="editor-header">
+            <button class="back-btn" @click="closeEditor">
+              <ChevronLeft :size="18" />
+              <span>返回</span>
+            </button>
+            <div class="editor-heading">
+              <span class="editor-episode-label">{{ editorEpisodeLabel }}</span>
+              <h2>{{ editorTitle }}</h2>
+            </div>
+            <div class="editor-actions">
+              <button
+                v-if="activeCard"
+                class="icon-action danger"
+                title="删除"
+                @click="softDeleteActiveNote"
+              >
+                <Trash2 :size="18" />
+              </button>
+              <button class="icon-action primary" title="保存" @click="saveEditor">
+                <Save :size="18" />
+              </button>
+            </div>
+          </header>
+
+          <div v-if="isCreating" class="target-row">
+            <label for="note-target">所属</label>
+            <select id="note-target" v-model="draftTargetKey">
+              <option
+                v-for="option in newTargetOptions"
+                :key="option.key"
+                :value="option.key"
+                :disabled="option.hasNote"
+              >
+                {{ option.label }}{{ option.hasNote ? '（已有笔记）' : '' }}
+              </option>
+            </select>
+          </div>
+
+          <div v-if="editorAnchors.length" class="timestamp-row">
+            <button
+              v-for="anchor in editorAnchors"
+              :key="`${anchor.label}-${anchor.seconds}`"
+              class="timestamp-chip"
+              :disabled="isCreating"
+              @click="openTheatreAt(activeCard, anchor.seconds)"
+            >
+              <Clock :size="14" />
+              <span>{{ anchor.label }}</span>
+            </button>
+          </div>
+
+          <section class="markdown-editor">
+            <header class="markdown-toolbar">
+              <div class="markdown-tools">
+                <button title="标题" @click="insertLine('# ')">
+                  <Heading1 :size="16" />
+                </button>
+                <button title="加粗" @click="insertMarkdown('**', '**', '加粗文字')">
+                  <Bold :size="16" />
+                </button>
+                <button title="斜体" @click="insertMarkdown('*', '*', '斜体文字')">
+                  <Italic :size="16" />
+                </button>
+                <button title="引用" @click="insertLine('> ')">
+                  <Quote :size="16" />
+                </button>
+                <button title="无序列表" @click="insertLine('- ')">
+                  <List :size="16" />
+                </button>
+                <button title="有序列表" @click="insertLine('1. ')">
+                  <ListOrdered :size="16" />
+                </button>
+                <button title="代码" @click="insertMarkdown('`', '`', 'code')">
+                  <Code2 :size="16" />
+                </button>
+                <button title="链接" @click="insertMarkdown('[', '](https://)', '链接文字')">
+                  <Link :size="16" />
+                </button>
+                <button title="时间戳" @click="insertTimestamp">
+                  <Clock :size="16" />
+                </button>
+              </div>
+              <div class="markdown-modes">
+                <button
+                  title="编辑"
+                  :class="{ active: editorMode === 'edit' }"
+                  @click="setEditorMode('edit')"
+                >
+                  <Edit3 :size="16" />
+                </button>
+                <button
+                  title="分屏"
+                  :class="{ active: editorMode === 'split' }"
+                  @click="setEditorMode('split')"
+                >
+                  <Columns2 :size="16" />
+                </button>
+                <button
+                  title="预览"
+                  :class="{ active: editorMode === 'preview' }"
+                  @click="setEditorMode('preview')"
+                >
+                  <Eye :size="16" />
+                </button>
+              </div>
+            </header>
+
+            <div class="markdown-body" :class="`mode-${editorMode}`">
+              <textarea
+                v-show="editorMode !== 'preview'"
+                ref="editorTextareaRef"
+                v-model="editorText"
+                class="note-editor"
+                placeholder="记录这部动画或某一集的想法..."
+              ></textarea>
+              <article
+                v-show="editorMode !== 'edit'"
+                class="markdown-preview"
+                v-html="editorPreviewHtml"
+              ></article>
+            </div>
+          </section>
+
+          <footer class="editor-footer">
+            <div class="editor-footer-left">
+              <span class="word-count">总字数 {{ editorWordCount }}</span>
+              <span class="save-status" :class="saveStatus">
+                <Loader2 v-if="saveStatus === 'saving'" :size="14" class="spin-icon" />
+                <CheckCircle2 v-else-if="saveStatus === 'saved'" :size="14" />
+                <span v-if="saveStatus === 'saving'">保存中...</span>
+                <span v-else-if="saveStatus === 'saved'">已保存</span>
+              </span>
+              <span v-if="editorMessage">{{ editorMessage }}</span>
+            </div>
+            <span v-if="!uiState.settings.compactMode" class="editor-hint">
+              截图请在放映厅中添加，这里适合整理和修改已有笔记。
+            </span>
+          </footer>
+        </div>
+
+        <div v-else class="notes-list-area">
+          <div v-if="isLoading" class="empty-state">正在加载...</div>
+          <div v-else-if="currentCards.length === 0" class="empty-state">
+            {{ trashMode ? '当前动画没有已删除笔记' : '当前动画还没有笔记' }}
+          </div>
+
+          <div v-else class="note-grid">
+            <article
+              v-for="card in currentCards"
+              :key="card.note.id"
+              class="note-card"
+              :class="{
+                selected: selectedNoteIds.has(card.note.id),
+                selectable: selectionMode || trashMode,
+              }"
+              @click="openEditor(card)"
+            >
+              <button
+                v-if="selectionMode || trashMode"
+                class="select-mark"
+                @click.stop="toggleNoteSelection(card.note.id)"
+              >
+                <CheckSquare v-if="selectedNoteIds.has(card.note.id)" :size="18" />
+                <Square v-else :size="18" />
+              </button>
+              <div class="note-cover">
+                <FileText :size="22" />
+                <p>{{ card.excerpt }}</p>
+              </div>
+              <div class="note-meta">
+                <span>{{ card.targetLabel }}</span>
+                <span>{{ formatDate(card.updatedAt) }}</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <BaseModal
+      v-model="deleteDialogOpen"
+      :title="deleteDialogTitle"
+      width="420px"
+      :close-on-overlay="false"
+      @close="cancelDeleteDialog"
+    >
+      <p class="dialog-message">{{ deleteDialogMessage }}</p>
+      <template #footer>
+        <button class="dialog-cancel" @click="cancelDeleteDialog">取消</button>
+        <button class="dialog-confirm danger" @click="confirmDeleteDialog">删除</button>
+      </template>
+    </BaseModal>
+  </div>
+</template>
+
+<style scoped>
+.notes-view {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 24px;
+  min-height: calc(100vh - 108px);
+}
+
+.anime-column {
+  min-height: calc(100vh - 108px);
+  border-right: 1px solid var(--outline-variant);
+  padding-right: 20px;
+}
+
+.anime-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--primary);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 12px 10px 40px;
+  border: 1px solid transparent;
+  border-radius: 99px;
+  outline: none;
+  background-color: var(--surface-low);
+  color: var(--on-surface);
+  font-size: 14px;
+}
+
+.search-input:focus {
+  border-color: var(--primary-container);
+  background-color: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.anime-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 164px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.anime-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  color: var(--on-surface-variant);
+  text-align: left;
+}
+
+.anime-item:hover,
+.anime-item.active {
+  background-color: var(--surface-low);
+  color: var(--primary);
+}
+
+.anime-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.anime-count {
+  flex: 0 0 auto;
+  min-width: 28px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  background-color: var(--surface);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.anime-item.active .anime-count {
+  background-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.notes-workspace {
+  min-width: 0;
+  min-height: calc(100vh - 108px);
+}
+
+.notes-toolbar,
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.notes-toolbar {
+  margin-bottom: 24px;
+}
+
+.toolbar-title {
+  min-width: 0;
+}
+
+.mode-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.toolbar-title h1 {
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 28px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-actions,
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--primary);
+  opacity: 0.6;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.tool-btn {
+  min-height: 32px;
+}
+
+.tool-btn:hover,
+.tool-btn.active {
+  color: var(--primary);
+  opacity: 1;
+}
+
+.tool-btn.danger {
+  color: var(--error);
+}
+
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.notes-list-area {
+  min-height: 360px;
+}
+
+.note-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 20px;
+}
+
+.note-card {
+  position: relative;
+  min-height: 280px;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background-color: var(--surface);
+  box-shadow: var(--shadow-ambient);
+  cursor: pointer;
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.note-card:hover {
+  transform: translateY(-5px);
+  border-color: var(--primary-container);
+  box-shadow: 0 18px 40px rgba(26, 28, 26, 0.12);
+}
+
+.note-card.selected {
+  border-color: var(--primary);
+  outline: 3px solid var(--primary-light);
+}
+
+.note-card.selectable {
+  cursor: default;
+}
+
+.select-mark {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.88);
+  color: var(--primary);
+  box-shadow: var(--shadow-soft);
+}
+
+.note-cover {
+  height: 224px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--on-surface);
+  background:
+    linear-gradient(150deg, rgba(255, 222, 165, 0.42), transparent 42%), var(--surface-low);
+}
+
+.note-cover svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.note-cover p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+.note-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.note-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-state {
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--outline-variant);
+  border-radius: 16px;
+  color: var(--on-surface-variant);
+  background-color: var(--surface-low);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.editor-layout {
+  min-height: calc(100vh - 108px);
+  padding: 28px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+  background-color: var(--surface);
+  box-shadow: var(--shadow-ambient);
+  display: flex;
+  flex-direction: column;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px 0 9px;
+  border-radius: 10px;
+  background-color: var(--surface-low);
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.back-btn:hover {
+  color: var(--primary);
+  background-color: var(--primary-light);
+}
+
+.icon-action {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background-color: var(--surface-low);
+  color: var(--on-surface-variant);
+}
+
+.icon-action:hover {
+  color: var(--primary);
+  background-color: var(--primary-light);
+}
+
+.icon-action.primary {
+  color: white;
+  background-color: var(--primary);
+}
+
+.icon-action.danger {
+  color: var(--error);
+}
+
+.editor-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.editor-heading h2 {
+  overflow: hidden;
+  font-size: 22px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-episode-label {
+  flex: 0 0 auto;
+  color: var(--on-surface-variant);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.target-row label {
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.target-row select {
+  min-width: 240px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface-low);
+  color: var(--on-surface);
+  outline: none;
+}
+
+.timestamp-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.timestamp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border-radius: 99px;
+  background-color: var(--primary-light);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.timestamp-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.markdown-editor {
+  margin-top: 20px;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background-color: var(--surface);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.markdown-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--outline-variant);
+  background-color: var(--surface-low);
+}
+
+.markdown-tools,
+.markdown-modes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.markdown-toolbar button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--on-surface-variant);
+}
+
+.markdown-toolbar button:hover,
+.markdown-toolbar button.active {
+  background-color: var(--surface);
+  color: var(--primary);
+  box-shadow: var(--shadow-soft);
+}
+
+.markdown-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 420px;
+  flex: 1;
+}
+
+.markdown-body.mode-edit,
+.markdown-body.mode-preview {
+  grid-template-columns: 1fr;
+}
+
+.note-editor {
+  width: 100%;
+  min-height: 100%;
+  padding: 18px;
+  resize: vertical;
+  border: 0;
+  border-right: 1px solid var(--outline-variant);
+  outline: none;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.note-editor:focus {
+  background-color: color-mix(in srgb, var(--surface) 92%, var(--primary-light));
+}
+
+.markdown-body.mode-edit .note-editor {
+  border-right: 0;
+}
+
+.markdown-preview {
+  min-width: 0;
+  min-height: 100%;
+  padding: 18px 22px;
+  overflow: auto;
+  color: var(--on-surface);
+  line-height: 1.75;
+  background-color: var(--surface);
+}
+
+.markdown-preview :deep(h1),
+.markdown-preview :deep(h2),
+.markdown-preview :deep(h3) {
+  margin: 0 0 12px;
+  color: var(--on-surface);
+  line-height: 1.25;
+}
+
+.markdown-preview :deep(p),
+.markdown-preview :deep(blockquote),
+.markdown-preview :deep(pre),
+.markdown-preview :deep(ul),
+.markdown-preview :deep(ol) {
+  margin: 0 0 12px;
+}
+
+.markdown-preview :deep(blockquote) {
+  padding: 8px 12px;
+  border-left: 3px solid var(--primary-container);
+  color: var(--on-surface-variant);
+  background-color: var(--surface-low);
+}
+
+.markdown-preview :deep(code) {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background-color: var(--surface-low);
+  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.markdown-preview :deep(pre) {
+  padding: 12px;
+  overflow-x: auto;
+  border-radius: 10px;
+  background-color: var(--surface-low);
+}
+
+.markdown-preview :deep(pre code) {
+  padding: 0;
+  background-color: transparent;
+}
+
+.markdown-preview :deep(a) {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.markdown-preview :deep(ul),
+.markdown-preview :deep(ol) {
+  padding-left: 22px;
+}
+
+.editor-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 24px;
+  margin-top: 10px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.editor-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.word-count {
+  color: var(--on-surface-variant);
+}
+
+.save-status {
+  min-width: 86px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--on-surface-variant);
+}
+
+.save-status.saved {
+  color: var(--primary);
+}
+
+.spin-icon {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.editor-hint {
+  margin-left: auto;
+  text-align: right;
+}
+
+.dialog-message {
+  color: var(--on-surface-variant);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.dialog-cancel,
+.dialog-confirm {
+  padding: 10px 24px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dialog-cancel {
+  color: var(--on-surface-variant);
+  background-color: var(--surface-low);
+}
+
+.dialog-confirm {
+  color: white;
+  background: linear-gradient(to right, var(--primary), var(--primary-container));
+  box-shadow: var(--shadow-soft);
+}
+
+.dialog-confirm.danger {
+  background: var(--error);
+}
+
+@media (max-width: 980px) {
+  .notes-view {
+    grid-template-columns: 1fr;
+  }
+
+  .anime-column {
+    min-height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--outline-variant);
+    padding-right: 0;
+    padding-bottom: 18px;
+  }
+
+  .anime-search {
+    position: static;
+  }
+
+  .anime-list {
+    max-height: none;
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .anime-item {
+    flex: 0 0 220px;
+  }
+
+  .notes-toolbar,
+  .editor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .toolbar-actions,
+  .editor-actions {
+    justify-content: flex-start;
+  }
+
+  .editor-heading {
+    justify-content: flex-start;
+  }
+
+  .markdown-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .markdown-body {
+    grid-template-columns: 1fr;
+  }
+
+  .note-editor {
+    border-right: 0;
+    border-bottom: 1px solid var(--outline-variant);
+  }
+}
+</style>

@@ -3,6 +3,12 @@ import { getSearchResults } from './bangumi'
 import { fileAPI, matchAPI } from './storage'
 import type { BangumiAnime } from '@/models/Bangumi'
 
+const MANUAL_NO_MATCH_WARNING = '无法匹配，无法关联'
+
+function withoutManualNoMatchWarning(warnings: string[] | undefined) {
+  return (warnings ?? []).filter((warning) => warning !== MANUAL_NO_MATCH_WARNING)
+}
+
 export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
   const files = (await fileAPI.getAll()).filter((file) => file.scan_state !== 'missing')
 
@@ -92,6 +98,10 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
         const keyword = `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`
         const results = await getSearchResults(keyword)
         if (results.length === 0) {
+          await matchAPI.update(folderKey, {
+            candidate_bangumi_ids: [],
+            selected_anime_id: 0,
+          })
           console.warn(`无搜索结果: ${keyword}`)
           return
         }
@@ -108,6 +118,30 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
   )
 
   return matchCandidate
+}
+
+export async function manualSearchMatch(matchKey: string, keyword: string): Promise<BangumiAnime[]> {
+  const searchKeyword = keyword.trim()
+  if (!searchKeyword) throw new Error('请输入动画名称')
+
+  const existing = await matchAPI.getByFolderKey(matchKey)
+  if (!existing) throw new Error('匹配记录不存在')
+  if (existing.status === 'mapping' || existing.status === 'completed') {
+    throw new Error('当前条目正在关联或已完成，无法重新匹配')
+  }
+
+  const cleanWarnings = withoutManualNoMatchWarning(existing.warnings)
+  const topResults = (await getSearchResults(searchKeyword)).slice(0, 4)
+
+  await matchAPI.update(matchKey, {
+    status: 'idle',
+    search_keyword: searchKeyword,
+    selected_anime_id: 0,
+    candidate_bangumi_ids: topResults.map((item) => item.id),
+    warnings: topResults.length > 0 ? cleanWarnings : [...cleanWarnings, MANUAL_NO_MATCH_WARNING],
+  })
+
+  return topResults
 }
 
 export async function selectMatch(matchKey: string, bangumi_id: number) {
