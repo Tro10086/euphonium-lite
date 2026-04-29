@@ -28,6 +28,36 @@ export async function requestLibraryRoot(): Promise<LibraryRoot> {
 
   const handle = await window.showDirectoryPicker();
   const now = new Date();
+  const existingRoots = await libraryRootAPI.getAll();
+  const existingRoot = (
+    await Promise.all(
+      existingRoots.map(async (root) => {
+        try {
+          return (await root.handle.isSameEntry(handle)) ? root : null;
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).find((root): root is LibraryRoot => Boolean(root));
+
+  if (existingRoot) {
+    const updatedRoot: LibraryRoot = {
+      ...existingRoot,
+      name: handle.name,
+      handle,
+      updated_at: now,
+      last_granted_at: now,
+    };
+    await libraryRootAPI.update(existingRoot.id, {
+      name: handle.name,
+      handle,
+      last_granted_at: now,
+    });
+    await db.dirHandle.put({ id: existingRoot.id, handle });
+    return updatedRoot;
+  }
+
   const root: LibraryRoot = {
     id: crypto.randomUUID(),
     name: handle.name,
@@ -38,10 +68,7 @@ export async function requestLibraryRoot(): Promise<LibraryRoot> {
   };
 
   await libraryRootAPI.add(root);
-  await db.dirHandle.bulkPut([
-    { id: root.id, handle },
-    { id: 'main', handle },
-  ]);
+  await db.dirHandle.put({ id: root.id, handle });
   return root;
 }
 
@@ -152,7 +179,7 @@ export async function scanVideos(dirHandle: FileSystemDirectoryHandle) {
   // await db.table('files').bulkAdd(files);
   // return files;
   const root: LibraryRoot = {
-    id: 'main',
+    id: crypto.randomUUID(),
     name: dirHandle.name,
     handle: dirHandle,
     created_at: new Date(),

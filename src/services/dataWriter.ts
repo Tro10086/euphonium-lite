@@ -4,6 +4,12 @@ import { animeAPI, episodeAPI, fileAPI, matchAPI } from './storage'
 import type { Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 
+function uniqueTags(tags: string[] | undefined): string[] {
+  return Array.from(
+    new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
+  )
+}
+
 export async function saveMatchResult(keyword: string) {
   // Phase 1: 准备阶段（事务外）
   const match = await matchAPI.getByFolderKey(keyword)
@@ -26,7 +32,7 @@ export async function saveMatchResult(keyword: string) {
         cover: bangumiAnime.images?.large ?? bangumiAnime.images?.common ?? '',
         summary: bangumiAnime.summary,
         bangumi_score: bangumiAnime.rating?.score ?? 0,
-        tags: bangumiAnime.meta_tags ?? [],
+        tags: uniqueTags(bangumiAnime.meta_tags),
         total_episodes: bangumiAnime.eps,
         date: bangumiAnime.date,
         air_year: Number.parseInt((bangumiAnime.date ?? '').slice(0, 4), 10) || undefined,

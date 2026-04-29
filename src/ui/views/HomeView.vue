@@ -3,13 +3,14 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { type CollectionItem, uiState } from '@/ui/stores/uiState';
 import { ArrowUpDown, CheckSquare, Filter, Play, RotateCcw, Square, Trash2 } from 'lucide-vue-next';
-import { animeAPI } from '@/services/storage';
-import type { Anime } from '@/models/Anime';
+import { animeAPI, episodeAPI } from '@/services/storage';
+import type { Anime, Episode } from '@/models/Anime';
 const router = useRouter();
 
 const years = ['all', '2024', '2023', '2022', '2021'];
 const genres = ['all', '治愈', '奇幻', '艺术', '极简', '实验', '悬疑', '科幻', '青春'];
 const animes = ref<Anime[]>([]);
+const episodesByAnimeId = ref<Record<string, Episode[]>>({});
 const selectedTrashIds = ref<Set<string>>(new Set());
 const emptyText = computed(() => (uiState.homeFilter === 'trash' ? '回收站为空' : '暂无真实馆藏数据'));
 const isTrashView = computed(() => uiState.homeFilter === 'trash');
@@ -36,22 +37,47 @@ const recentAnimeIds = computed(() =>
     .map((anime) => anime.id),
 );
 
+const uniqueTags = (tags: string[] | undefined) =>
+  Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)));
+
+const progressForAnime = (anime: Anime) => {
+  const episodes = episodesByAnimeId.value[anime.id] ?? [];
+  const total = anime.total_episodes || episodes.length || 0;
+  const watchedEpisodes = episodes.filter((episode) =>
+    episode.watched || (episode.watch_percentage ?? 0) >= 90,
+  ).length;
+  const progressSum = episodes.reduce((sum, episode) => {
+    if (episode.watched) return sum + 100;
+    return sum + Math.min(100, Math.max(0, episode.watch_percentage ?? 0));
+  }, 0);
+  const watchProgress = total > 0 ? Math.round(progressSum / total) : 0;
+
+  return { watchedEpisodes, watchProgress };
+};
+
 const libraryCollections = computed<CollectionItem[]>(() => {
-  return animes.value.map((anime) => ({
-    id: anime.id,
-    title: anime.name_cn || anime.name || '未命名番剧',
-    meta: `${anime.date?.slice(0, 4) || '未知'} · ${anime.status}`,
-    year: Number(anime.date?.slice(0, 4)) || 0,
-    episodes: anime.total_episodes,
-    score: anime.bangumi_score || anime.rating || 0,
-    tags: anime.tags.length ? anime.tags : ['本地'],
-    desc: anime.summary || '暂无简介',
-    image: anime.cover || 'https://picsum.photos/seed/euphonium-local/800/1200',
-    episodesList: Array.from({ length: anime.total_episodes || 1 }, (_, index) => `第 ${index + 1} 集`),
-    deletedAt: asDate(anime.deleted_at),
-    purgeRequestedAt: asDate(anime.purge_requested_at),
-    isFavorite: Boolean(anime.is_favorite),
-  }));
+  return animes.value.map((anime) => {
+    const tags = uniqueTags(anime.tags);
+    const progress = progressForAnime(anime);
+
+    return {
+      id: anime.id,
+      title: anime.name_cn || anime.name || '未命名番剧',
+      meta: `${anime.date?.slice(0, 4) || '未知'} · ${anime.status}`,
+      year: Number(anime.date?.slice(0, 4)) || 0,
+      episodes: anime.total_episodes,
+      score: anime.bangumi_score || anime.rating || 0,
+      desc: anime.summary || '暂无简介',
+      image: anime.cover || 'https://picsum.photos/seed/euphonium-local/800/1200',
+      episodesList: Array.from({ length: anime.total_episodes || 1 }, (_, index) => `第 ${index + 1} 集`),
+      deletedAt: asDate(anime.deleted_at),
+      purgeRequestedAt: asDate(anime.purge_requested_at),
+      isFavorite: Boolean(anime.is_favorite),
+      tags: tags.length ? tags : ['本地'],
+      watchedEpisodes: progress.watchedEpisodes,
+      watchProgress: progress.watchProgress,
+    };
+  });
 });
 
 const filteredCollections = computed(() => {
@@ -126,7 +152,13 @@ const handleCardClick = (item: CollectionItem) => {
 };
 
 const refreshAnimes = async () => {
-  animes.value = await animeAPI.getAll();
+  const [animeRows, episodeRows] = await Promise.all([animeAPI.getAll(), episodeAPI.getAll()]);
+  const grouped: Record<string, Episode[]> = {};
+  for (const episode of episodeRows) {
+    (grouped[episode.anime_id] ??= []).push(episode);
+  }
+  animes.value = animeRows;
+  episodesByAnimeId.value = grouped;
 };
 
 const moveToTrash = async (item: CollectionItem) => {
@@ -186,6 +218,10 @@ const markSelectedTrashDeleted = async () => {
 
 watch(() => uiState.homeFilter, () => {
   setTrashSelection([]);
+});
+
+watch(() => uiState.libraryVersion, () => {
+  void refreshAnimes();
 });
 
 onMounted(async () => {

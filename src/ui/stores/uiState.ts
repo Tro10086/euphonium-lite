@@ -19,6 +19,8 @@ export interface CollectionItem {
   deletedAt?: Date | null
   purgeRequestedAt?: Date | null
   isFavorite?: boolean
+  watchedEpisodes?: number
+  watchProgress?: number
 }
 
 interface UISettings {
@@ -38,6 +40,7 @@ interface UIState {
   searchQuery: string
   selectedMedia: CollectionItem | null
   isCollectionModalOpen: boolean
+  libraryVersion: number
   navItems: NavItem[]
   settings: UISettings
 }
@@ -108,6 +111,7 @@ export const uiState = reactive<UIState>({
   searchQuery: '',
   selectedMedia: null,
   isCollectionModalOpen: false,
+  libraryVersion: 0,
   navItems: [
     { id: 'all', label: '全部' },
     { id: 'recent', label: '最近' },

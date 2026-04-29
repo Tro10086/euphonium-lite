@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { FolderOpen, HardDrive, Edit2, Radar, FileJson, FileCode, Check, HelpCircle, Trash2 } from 'lucide-vue-next';
+import { FolderOpen, HardDrive, Edit2, Radar, FileJson, FileCode, Check, HelpCircle, Trash2, X } from 'lucide-vue-next';
 import BaseButton from '@/ui/components/BaseButton.vue';
 import type { BangumiAnime } from '@/models/Bangumi';
 import type { BangumiEpisode } from '@/models/Bangumi';
@@ -31,7 +31,12 @@ const fileMap = reactive<Record<string, VideoFile>>({});
 const offsetInputs = reactive<Record<string, number>>({});
 const confirmingKeys = reactive(new Set<string>());
 
-const targetFolderPath = computed(() => activeRoot.value?.name ?? '尚未选择目录');
+const targetFolderPath = computed(() => {
+  const [firstRoot] = roots.value;
+  if (!firstRoot) return '尚未选择目录';
+  if (roots.value.length === 1) return firstRoot.name;
+  return roots.value.map((root) => root.name).join(' / ');
+});
 const reviewGroups = computed(() =>
   matches.value
     .filter((match) => match.status !== 'completed')
@@ -293,16 +298,22 @@ const selectCandidate = (key: string, bangumiId: number) => {
 
 const startScan = async () => {
   await runWithStatus('正在扫描目录并匹配 Bangumi...', async () => {
-    if (!activeRoot.value) {
+    if (roots.value.length === 0) {
       activeRoot.value = await requestLibraryRoot();
       roots.value = await getLibraryRoots();
     }
 
-    const result = await scanLibraryRoot(activeRoot.value);
+    const totals = { added: 0, updated: 0, missing: 0 };
+    for (const root of roots.value) {
+      const result = await scanLibraryRoot(root);
+      totals.added += result.added;
+      totals.updated += result.updated;
+      totals.missing += result.missing;
+    }
     scanSummary.value = {
-      added: result.added,
-      updated: result.updated,
-      missing: result.missing,
+      added: totals.added,
+      updated: totals.updated,
+      missing: totals.missing,
     };
 
     const candidates = await createMatch();
@@ -326,6 +337,13 @@ const confirmAll = () => {
       if (!group.selectedId) continue;
       await confirmGroup(group.key, group.selectedId, false);
     }
+    await refreshMatches();
+  });
+};
+
+const cancelAll = () => {
+  runWithStatus('正在取消全部待确认结果...', async () => {
+    await Promise.all(reviewGroups.value.map((group) => matchAPI.delete(group.key)));
     await refreshMatches();
   });
 };
@@ -411,6 +429,18 @@ onMounted(async () => {
             </button>
           </div>
 
+          <div v-if="roots.length > 0" class="root-list">
+            <button
+              v-for="root in roots"
+              :key="root.id"
+              class="root-chip"
+              :class="{ active: activeRoot?.id === root.id }"
+              @click="activeRoot = root"
+            >
+              {{ root.name }}
+            </button>
+          </div>
+
           <BaseButton full-width size="lg" :disabled="isBusy" @click="startScan">
             <template #icon><Radar :size="20" /></template>
             <span>{{ isBusy ? '处理中...' : '开始扫描' }}</span>
@@ -436,10 +466,16 @@ onMounted(async () => {
               找到 {{ reviewGroups.length }} 个待确认目录
             </span>
           </div>
-          <BaseButton :disabled="isBusy" @click="confirmAll">
-            <template #icon><Check :size="16" /></template>
-            <span>{{ isBusy ? '处理中...' : '一键确认' }}</span>
-          </BaseButton>
+          <div class="bulk-actions">
+            <BaseButton :disabled="isBusy" @click="confirmAll">
+              <template #icon><Check :size="16" /></template>
+              <span>{{ isBusy ? '处理中...' : '一键确认' }}</span>
+            </BaseButton>
+            <BaseButton variant="secondary" :disabled="isBusy || reviewGroups.length === 0" @click="cancelAll">
+              <template #icon><X :size="16" /></template>
+              <span>一键取消</span>
+            </BaseButton>
+          </div>
         </header>
 
         <div v-if="reviewGroups.length > 0" class="results-list">
@@ -616,10 +652,10 @@ onMounted(async () => {
 
 .import-layout {
   display: grid;
-  grid-template-columns: 400px 1fr;
-  gap: 32px;
-  padding: 24px 48px;
-  max-width: 1400px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+  padding: 16px 24px;
+  max-width: 1680px;
   margin: 0 auto;
 }
 
@@ -733,6 +769,31 @@ onMounted(async () => {
   margin-bottom: 32px;
 }
 
+.root-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -20px 0 24px;
+}
+
+.root-chip {
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background-color: var(--surface-low);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.root-chip.active {
+  color: var(--primary);
+  background-color: var(--primary-light);
+}
+
 .path-text {
   font-family: monospace;
   font-size: 13px;
@@ -771,6 +832,12 @@ onMounted(async () => {
   line-height: 1;
 }
 
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .results-list {
   display: flex;
   flex-direction: column;
@@ -780,7 +847,7 @@ onMounted(async () => {
 .result-card {
   background-color: var(--surface);
   border-radius: 20px;
-  padding: 24px 24px 24px 172px;
+  padding: 24px 24px 24px 148px;
   box-shadow: var(--shadow-soft);
   display: block;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -803,7 +870,7 @@ onMounted(async () => {
 .poster-backdrop {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 300px;
+  width: 260px;
   pointer-events: none;
   opacity: 0.42;
 }
@@ -887,6 +954,7 @@ onMounted(async () => {
   border: 1px solid var(--outline-variant);
   border-radius: 16px;
   background-color: color-mix(in srgb, var(--surface) 86%, transparent);
+  overflow-x: auto;
 }
 
 .mapping-card-header {
@@ -963,11 +1031,12 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 920px;
 }
 
 .file-match-row {
   display: grid;
-  grid-template-columns: minmax(360px, 1.8fr) 46px 58px minmax(180px, 1fr);
+  grid-template-columns: minmax(520px, 2.8fr) minmax(72px, max-content) 72px minmax(160px, 0.9fr);
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
@@ -1004,6 +1073,7 @@ onMounted(async () => {
 .parsed-episode {
   color: var(--on-surface-variant);
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .episode-title-inline {

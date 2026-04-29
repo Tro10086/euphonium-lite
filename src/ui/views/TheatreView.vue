@@ -7,6 +7,7 @@ import type { TipTapJSON } from '@/models/Note';
 import { animeAPI, episodeAPI, fileAPI } from '@/services/storage';
 import { createPlaybackUrl, revokePlaybackUrl } from '@/services/playback';
 import { attachmentAPI, notesAPI } from '@/services/notes';
+import { uiState } from '@/ui/stores/uiState';
 import {
   Play, PlayCircle, Star, Maximize, Pause,
   Volume2, VolumeX, ChevronDown, Heart, SkipBack, SkipForward
@@ -26,6 +27,8 @@ const noteAttachmentIds = ref<string[]>([]);
 const noteMessage = ref('');
 
 const hasRealData = computed(() => Boolean(realAnime.value));
+const uniqueTags = (tags: string[] | undefined) =>
+  Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)));
 const media = computed(() => {
   if (!realAnime.value) {
     return {
@@ -48,7 +51,7 @@ const media = computed(() => {
     year: realAnime.value.air_year || (realAnime.value.date ? Number(realAnime.value.date.slice(0, 4)) : ''),
     episodes: realAnime.value.total_episodes || realEpisodes.value.length,
     score: realAnime.value.bangumi_score || realAnime.value.rating || 0,
-    tags: realAnime.value.tags || [],
+    tags: uniqueTags(realAnime.value.tags),
     desc: realAnime.value.summary || '暂无简介',
     image: realAnime.value.cover || '',
     episodesList: realEpisodes.value.map((ep) => ep.name_cn || ep.name || `第 ${ep.ep} 集`),
@@ -229,6 +232,7 @@ async function loadNote() {
 async function saveNote(message = '笔记已保存') {
   const targetId = noteTargetId.value;
   if (!targetId) return;
+  if (!noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) return;
 
   noteId.value = await notesAPI.save({
     id: noteId.value ?? undefined,
@@ -236,10 +240,24 @@ async function saveNote(message = '笔记已保存') {
     targetId,
     tiptapJson: textToTipTapJson(noteText.value, noteAttachmentIds.value),
     plainText: noteText.value,
-    attachmentIds: noteAttachmentIds.value,
+    attachmentIds: [...noteAttachmentIds.value],
   });
   noteMessage.value = message;
 }
+
+const toggleFavorite = async () => {
+  if (!realAnime.value) return;
+
+  const nextValue = !isFavorited.value;
+  await animeAPI.update(realAnime.value.id, { is_favorite: nextValue });
+  isFavorited.value = nextValue;
+  realAnime.value = {
+    ...realAnime.value,
+    is_favorite: nextValue,
+    updated_at: new Date(),
+  };
+  uiState.libraryVersion += 1;
+};
 
 function insertTimestampNote() {
   const seconds = Math.max(0, Math.floor(currentTime.value));
@@ -375,6 +393,7 @@ const loadTheatreData = async () => {
       activeEpisodeIdx.value = 0;
       currentTime.value = 0;
       duration.value = 0;
+      isFavorited.value = false;
       return;
     }
 
@@ -386,6 +405,7 @@ const loadTheatreData = async () => {
     const filesById = new Map(files.map((file) => [file.id, file]));
 
     realAnime.value = anime;
+    isFavorited.value = Boolean(anime.is_favorite);
     realEpisodes.value = episodes;
     filesByEpisode.value = Object.fromEntries(
       episodes.map((ep) => [
@@ -608,7 +628,7 @@ watch(volume, (value) => {
               <button 
                 class="plain-heart-btn" 
                 :class="{ active: isFavorited }"
-                @click="isFavorited = !isFavorited"
+                @click="toggleFavorite"
               >
                 <Heart :size="22" :fill="isFavorited ? '#c62828' : 'none'" :color="isFavorited ? '#c62828' : 'currentColor'" />
               </button>

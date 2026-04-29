@@ -40,7 +40,11 @@ class EuphoniumNotesDB extends Dexie {
 export const notesDb = new EuphoniumNotesDB()
 
 function cloneTipTapJson(json: TipTapJSON): TipTapJSON {
-  return structuredClone(json)
+  return JSON.parse(JSON.stringify(json ?? {})) as TipTapJSON
+}
+
+function cloneStringArray(values: string[] | undefined): string[] {
+  return Array.from(values ?? []).filter((value): value is string => typeof value === 'string')
 }
 
 function walkTipTapJson(node: TipTapJSON, visitor: (node: TipTapJSON) => TipTapJSON): TipTapJSON {
@@ -104,7 +108,7 @@ export const notesAPI = {
       targetId: draft.targetId,
       tiptapJson: sanitizeImageAttrs(draft.tiptapJson),
       plainText: draft.plainText,
-      attachmentIds: draft.attachmentIds ?? existing?.attachmentIds ?? [],
+      attachmentIds: cloneStringArray(draft.attachmentIds ?? existing?.attachmentIds),
       created_at: existing?.created_at ?? now,
       updated_at: now,
     }

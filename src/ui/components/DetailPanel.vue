@@ -3,14 +3,24 @@ import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { uiState } from '@/ui/stores/uiState';
 import { X, Heart, Star, Play } from 'lucide-vue-next';
+import { animeAPI } from '@/services/storage';
 
-defineEmits(['close']);
+const emit = defineEmits(['close']);
 const router = useRouter();
 
 const isExpanded = ref(false);
 const showExpandBtn = ref(false);
 const descRef = ref<HTMLElement | null>(null);
 const selectedMedia = computed(() => uiState.selectedMedia);
+const progressStats = computed(() => {
+  const item = selectedMedia.value;
+  if (!item) return { watched: 0, total: 0, percent: 0 };
+
+  const total = item.episodes || item.episodesList?.length || 0;
+  const watched = Math.min(item.watchedEpisodes ?? 0, total);
+  const percent = Math.min(100, Math.max(0, item.watchProgress ?? 0));
+  return { watched, total, percent };
+});
 
 const checkTruncation = () => {
   nextTick(() => {
@@ -44,22 +54,38 @@ const goToTheatre = () => {
   uiState.selectedMedia = null;
   router.push({ name: 'theatre', params: { id } });
 };
+
+const toggleFavorite = async () => {
+  if (!uiState.selectedMedia) return;
+
+  const nextValue = !uiState.selectedMedia.isFavorite;
+  await animeAPI.update(String(uiState.selectedMedia.id), { is_favorite: nextValue });
+  uiState.selectedMedia = {
+    ...uiState.selectedMedia,
+    isFavorite: nextValue,
+  };
+  uiState.libraryVersion += 1;
+};
 </script>
 
 <template>
   <div class="detail-wrapper">
     <!-- Click outside overlay -->
-    <div class="overlay" @click="$emit('close')"></div>
+    <div class="overlay" @click="emit('close')"></div>
     
     <aside v-if="selectedMedia" class="detail-panel glass-panel">
       <!-- Header -->
     <header class="header">
-      <button class="close-btn" @click="$emit('close')">
+      <button class="close-btn" @click="emit('close')">
         <X :size="20" />
       </button>
       <div class="actions">
-        <button class="icon-btn-round">
-          <Heart :size="20" class="heart-icon" />
+        <button class="icon-btn-round" :class="{ active: selectedMedia.isFavorite }" @click="toggleFavorite">
+          <Heart
+            :size="20"
+            class="heart-icon"
+            :fill="selectedMedia.isFavorite ? 'currentColor' : 'none'"
+          />
         </button>
       </div>
     </header>
@@ -97,10 +123,10 @@ const goToTheatre = () => {
       <div class="progress-card">
         <div class="progress-header">
           <span class="progress-label">观看进度</span>
-          <span class="progress-stats">已观看 4 / {{ selectedMedia.episodes }} 集</span>
+          <span class="progress-stats">已观看 {{ progressStats.watched }} / {{ progressStats.total }} 集</span>
         </div>
         <div class="progress-bar">
-          <div class="progress-fill" style="width: 33%"></div>
+          <div class="progress-fill" :style="{ width: `${progressStats.percent}%` }"></div>
         </div>
       </div>
 
@@ -196,7 +222,11 @@ const goToTheatre = () => {
 
 .heart-icon {
   color: var(--primary);
-  /* fill: var(--primary); // Optional: keep outline if desired */
+}
+
+.icon-btn-round.active {
+  color: var(--primary);
+  background-color: var(--primary-light);
 }
 
 .panel-content {
@@ -253,6 +283,9 @@ const goToTheatre = () => {
   font-size: 12px;
   color: var(--on-surface-variant);
   opacity: 0.8;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .dot, .inner-dot {
@@ -265,12 +298,16 @@ const goToTheatre = () => {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
 }
 
 .tag-pill {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 0 0 auto;
 }
 
 .progress-card {
