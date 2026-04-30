@@ -4,7 +4,9 @@ import type { VideoFile } from '@/models/File'
 import type { WatchHistory } from '@/models/History'
 import type { MatchRecord } from '@/models/Match'
 import type { LibraryRoot } from '@/models/Library'
+import type { UserCollection } from '@/models/Collection'
 import { notesDb } from '@/services/notes'
+import { rememberAnimeFilterOptions } from '@/services/filterOptions'
 
 const toDate = (value: Date | string | number | null | undefined): Date | null => {
   if (!value) return null
@@ -30,6 +32,87 @@ export const libraryRootAPI = {
   },
 }
 
+const normalizeAnimeIds = (animeIds: string[] | undefined) =>
+  Array.from(new Set((animeIds ?? []).filter(Boolean)))
+
+export const collectionAPI = {
+  async getAll() {
+    return db.collections.orderBy('order').toArray()
+  },
+
+  async getById(id: string) {
+    return db.collections.get(id)
+  },
+
+  async replaceAll(collections: UserCollection[]) {
+    const existing = await db.collections.toArray()
+    const existingIds = new Set(existing.map((collection) => collection.id))
+    const nextIds = new Set(collections.map((collection) => collection.id))
+    const removedIds = [...existingIds].filter((id) => !nextIds.has(id))
+
+    const normalized = collections.map((collection, index) => ({
+      ...collection,
+      animeIds: normalizeAnimeIds(collection.animeIds),
+      order: index,
+      updated_at: new Date(),
+    }))
+
+    await db.transaction('rw', db.collections, async () => {
+      if (normalized.length > 0) await db.collections.bulkPut(normalized)
+      if (removedIds.length > 0) await db.collections.bulkDelete(removedIds)
+    })
+
+    return this.getAll()
+  },
+
+  async add(label: string) {
+    const now = new Date()
+    const existingCount = await db.collections.count()
+    const collection: UserCollection = {
+      id: `collection-${crypto.randomUUID()}`,
+      label: label.trim(),
+      animeIds: [],
+      order: existingCount,
+      created_at: now,
+      updated_at: now,
+    }
+    await db.collections.add(collection)
+    return collection
+  },
+
+  async update(id: string, changes: Partial<Pick<UserCollection, 'label' | 'animeIds' | 'order'>>) {
+    const existing = await db.collections.get(id)
+    if (!existing) return 0
+
+    return db.collections.update(id, {
+      ...changes,
+      ...(changes.animeIds ? { animeIds: normalizeAnimeIds(changes.animeIds) } : {}),
+      updated_at: new Date(),
+    })
+  },
+
+  async addAnimeIds(id: string, animeIds: string[]) {
+    const collection = await db.collections.get(id)
+    if (!collection) return 0
+    return this.update(id, {
+      animeIds: [...collection.animeIds, ...animeIds],
+    })
+  },
+
+  async removeAnimeIds(id: string, animeIds: string[]) {
+    const collection = await db.collections.get(id)
+    if (!collection) return 0
+    const removeSet = new Set(animeIds)
+    return this.update(id, {
+      animeIds: collection.animeIds.filter((animeId) => !removeSet.has(animeId)),
+    })
+  },
+
+  async delete(id: string) {
+    return db.collections.delete(id)
+  },
+}
+
 export const animeAPI = {
   async add(anime: Omit<Anime, 'id' | 'rating' | 'status' | 'created_at' | 'updated_at'>) {
     const now = new Date()
@@ -44,7 +127,9 @@ export const animeAPI = {
       deleted_at: null,
       purge_requested_at: null,
     }
-    return db.anime.add(newAnime)
+    const id = await db.anime.add(newAnime)
+    rememberAnimeFilterOptions(newAnime)
+    return id
   },
 
   async getAll() {

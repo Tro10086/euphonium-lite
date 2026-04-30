@@ -9,6 +9,7 @@ import {
   type Note,
 } from '@/models/Note'
 import { attachmentAPI, notesAPI } from './notes'
+import { rememberAnimeFilterOptionsBulk } from './filterOptions'
 
 const exportDataKeys = [
   'anime',
@@ -312,6 +313,7 @@ export async function importExportData(
     if (matches.length > 0) await db.match.bulkPut(matches)
   })
 
+  rememberAnimeFilterOptionsBulk(anime)
   await notesAPI.bulkPut(notes)
   return result
 }

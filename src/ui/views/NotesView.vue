@@ -76,6 +76,8 @@ const isCreating = ref(false)
 const editorText = ref('')
 const editorMessage = ref('')
 const draftTargetKey = ref('')
+const targetMenuOpen = ref(false)
+const targetDropdownRef = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 const editorMode = ref<EditorMode>('split')
 const editorTextareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -209,15 +211,6 @@ const currentCards = computed(() => {
   return [...cards].sort(compareUpdatedDesc)
 })
 
-const targetNoteByKey = computed(() => {
-  const map = new Map<string, NoteCard>()
-  for (const card of allCards.value) {
-    if (card.anime.id !== selectedAnimeId.value || card.deletedAt) continue
-    map.set(`${card.note.targetType}:${card.note.targetId}`, card)
-  }
-  return map
-})
-
 const newTargetOptions = computed(() => {
   const anime = selectedAnime.value
   if (!anime) return []
@@ -226,12 +219,10 @@ const newTargetOptions = computed(() => {
     {
       key: `anime:${anime.id}`,
       label: '动画总笔记',
-      hasNote: targetNoteByKey.value.has(`anime:${anime.id}`),
     },
     ...selectedAnimeEpisodes.value.map((episode) => ({
       key: `episode:${episode.id}`,
       label: `第 ${episode.ep} 集 ${episode.name_cn || episode.name || ''}`.trim(),
-      hasNote: targetNoteByKey.value.has(`episode:${episode.id}`),
     })),
   ]
 })
@@ -267,6 +258,14 @@ const editorAnchors = computed(() =>
 const editorPreviewHtml = computed(() => renderMarkdown(editorText.value))
 const editorWordCount = computed(() => countWords(editorText.value))
 const selectedCount = computed(() => selectedNoteIds.value.size)
+const selectedDraftTargetLabel = computed(
+  () => newTargetOptions.value.find((option) => option.key === draftTargetKey.value)?.label ?? '',
+)
+const currentSelectableNoteIds = computed(() => currentCards.value.map((card) => card.note.id))
+const isCurrentListAllSelected = computed(() => {
+  const ids = currentSelectableNoteIds.value
+  return ids.length > 0 && ids.every((id) => selectedNoteIds.value.has(id))
+})
 
 function animeTitle(anime: Anime) {
   return anime.name_cn || anime.name || '未命名动画'
@@ -521,13 +520,8 @@ function cycleSort() {
 function startCreate() {
   if (!selectedAnime.value) return
 
-  const target = newTargetOptions.value.find((option) => !option.hasNote)
-  if (!target) {
-    editorMessage.value = '这个动画下已有可编辑笔记'
-    const firstCard = currentCards.value[0]
-    if (firstCard) openEditor(firstCard)
-    return
-  }
+  const target = newTargetOptions.value[0]
+  if (!target) return
 
   activeNoteId.value = null
   isCreating.value = true
@@ -535,14 +529,16 @@ function startCreate() {
   editorMessage.value = ''
   draftTargetKey.value = target.key
   editorMode.value = 'split'
+  targetMenuOpen.value = false
   clearSelection()
 }
 
 function openEditor(card: NoteCard) {
-  if (trashMode.value || selectionMode.value) {
+  if (selectionMode.value) {
     toggleNoteSelection(card.note.id)
     return
   }
+  if (trashMode.value) return
 
   activeNoteId.value = card.note.id
   isCreating.value = false
@@ -557,6 +553,7 @@ function closeEditor() {
   isCreating.value = false
   editorText.value = ''
   editorMessage.value = ''
+  targetMenuOpen.value = false
 }
 
 async function saveEditor() {
@@ -574,10 +571,8 @@ async function saveEditor() {
   }
 
   setSaveStatus('saving')
-  const existingTargetCard = targetNoteByKey.value.get(`${target.targetType}:${target.targetId}`)
-  const noteId = existingCard?.note.id ?? existingTargetCard?.note.id
-  const attachmentIds =
-    existingCard?.note.attachmentIds ?? existingTargetCard?.note.attachmentIds ?? []
+  const noteId = existingCard?.note.id
+  const attachmentIds = existingCard?.note.attachmentIds ?? []
 
   const savedId = await notesAPI.save({
     id: noteId,
@@ -591,6 +586,7 @@ async function saveEditor() {
   activeNoteId.value = savedId
   isCreating.value = false
   editorMessage.value = ''
+  targetMenuOpen.value = false
   await refreshData()
   setSaveStatus('saved')
 }
@@ -622,10 +618,37 @@ function toggleSelectionMode() {
   selectedNoteIds.value = new Set()
 }
 
+function toggleTargetMenu() {
+  if (!isCreating.value || newTargetOptions.value.length === 0) return
+  targetMenuOpen.value = !targetMenuOpen.value
+}
+
+function closeTargetMenu() {
+  targetMenuOpen.value = false
+}
+
+function selectDraftTarget(key: string) {
+  draftTargetKey.value = key
+  closeTargetMenu()
+}
+
 function toggleNoteSelection(id: string) {
   const next = new Set(selectedNoteIds.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
+  selectedNoteIds.value = next
+}
+
+function toggleSelectAll() {
+  const ids = currentSelectableNoteIds.value
+  if (ids.length === 0) return
+
+  const next = new Set(selectedNoteIds.value)
+  if (isCurrentListAllSelected.value) {
+    ids.forEach((id) => next.delete(id))
+  } else {
+    ids.forEach((id) => next.add(id))
+  }
   selectedNoteIds.value = next
 }
 
@@ -757,6 +780,17 @@ function toggleTrashMode() {
   ensureSelectedAnime()
 }
 
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (!targetMenuOpen.value || !targetDropdownRef.value) return
+  if (event.target instanceof Node && targetDropdownRef.value.contains(event.target)) return
+  closeTargetMenu()
+}
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  closeTargetMenu()
+}
+
 function openTheatreAt(card: NoteCard | null, seconds: number) {
   if (!card) return
 
@@ -775,11 +809,15 @@ watch(animeItems, ensureSelectedAnime)
 watch(() => route.query.animeId, ensureSelectedAnime)
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  window.addEventListener('keydown', handleWindowKeydown)
   await refreshData()
   ensureSelectedAnime()
 })
 
 onUnmounted(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  window.removeEventListener('keydown', handleWindowKeydown)
   clearSaveStatusTimer()
 })
 </script>
@@ -818,16 +856,22 @@ onUnmounted(() => {
           </div>
 
           <div class="toolbar-actions header-actions">
-            <button v-if="trashMode" class="tool-btn" @click="toggleTrashMode">
+            <span v-if="selectionMode" class="selection-summary">已选 {{ selectedCount }}</span>
+            <button v-if="trashMode" class="tool-btn" :disabled="selectionMode" @click="toggleTrashMode">
               <X :size="16" />
               <span>退出</span>
             </button>
-            <button v-else class="tool-btn" :disabled="!selectedAnime" @click="startCreate">
+            <button
+              v-else
+              class="tool-btn"
+              :disabled="!selectedAnime || selectionMode"
+              @click="startCreate"
+            >
               <Plus :size="16" />
               <span>新建</span>
             </button>
 
-            <button class="tool-btn" :title="sortLabel" @click="cycleSort">
+            <button class="tool-btn" :title="sortLabel" :disabled="selectionMode" @click="cycleSort">
               <ArrowUpDown :size="16" />
               <span>按{{ sortShortLabel }}排序</span>
             </button>
@@ -842,8 +886,14 @@ onUnmounted(() => {
               <span>多选</span>
             </button>
 
+            <button v-if="selectionMode" class="tool-btn" @click="toggleSelectAll">
+              <CheckSquare v-if="isCurrentListAllSelected" :size="16" />
+              <Square v-else :size="16" />
+              <span>{{ isCurrentListAllSelected ? '取消全选' : '全选' }}</span>
+            </button>
+
             <button
-              v-if="trashMode"
+              v-if="trashMode && selectionMode"
               class="tool-btn"
               :disabled="selectedCount === 0"
               @click="restoreSelected"
@@ -852,7 +902,7 @@ onUnmounted(() => {
               <span>恢复</span>
             </button>
             <button
-              v-else
+              v-else-if="selectionMode"
               class="tool-btn danger"
               :disabled="selectedCount === 0"
               @click="softDeleteSelected"
@@ -862,7 +912,7 @@ onUnmounted(() => {
             </button>
 
             <button
-              v-if="trashMode"
+              v-if="trashMode && selectionMode"
               class="tool-btn danger"
               :disabled="selectedCount === 0"
               @click="deleteSelectedPermanently"
@@ -870,7 +920,13 @@ onUnmounted(() => {
               <Trash2 :size="16" />
               <span>彻底删除</span>
             </button>
-            <button v-else class="tool-btn" :class="{ active: trashMode }" @click="toggleTrashMode">
+            <button
+              v-else
+              class="tool-btn"
+              :class="{ active: trashMode }"
+              :disabled="selectionMode"
+              @click="toggleTrashMode"
+            >
               <Trash2 :size="16" />
               <span>回收站</span>
             </button>
@@ -884,7 +940,9 @@ onUnmounted(() => {
               <span>返回</span>
             </button>
             <div class="editor-heading">
-              <span class="editor-episode-label">{{ editorEpisodeLabel }}</span>
+              <span v-if="!isCreating && editorEpisodeLabel" class="editor-episode-label">
+                {{ editorEpisodeLabel }}
+              </span>
               <h2>{{ editorTitle }}</h2>
             </div>
             <div class="editor-actions">
@@ -903,17 +961,38 @@ onUnmounted(() => {
           </header>
 
           <div v-if="isCreating" class="target-row">
-            <label for="note-target">所属</label>
-            <select id="note-target" v-model="draftTargetKey">
-              <option
-                v-for="option in newTargetOptions"
-                :key="option.key"
-                :value="option.key"
-                :disabled="option.hasNote"
+            <label id="note-target-label" for="note-target-trigger">所属</label>
+            <div
+              ref="targetDropdownRef"
+              class="target-dropdown"
+              :class="{ open: targetMenuOpen }"
+            >
+              <button
+                id="note-target-trigger"
+                type="button"
+                class="target-trigger"
+                :aria-expanded="targetMenuOpen"
+                aria-haspopup="listbox"
+                aria-labelledby="note-target-label note-target-trigger"
+                :disabled="newTargetOptions.length === 0"
+                @click="toggleTargetMenu"
               >
-                {{ option.label }}{{ option.hasNote ? '（已有笔记）' : '' }}
-              </option>
-            </select>
+                <span class="target-trigger-text">{{ selectedDraftTargetLabel }}</span>
+              </button>
+              <div v-if="targetMenuOpen" class="target-menu" role="listbox" aria-label="选择所属目标">
+                <button
+                  v-for="option in newTargetOptions"
+                  :key="option.key"
+                  type="button"
+                  class="target-option"
+                  :class="{ active: option.key === draftTargetKey }"
+                  @click="selectDraftTarget(option.key)"
+                >
+                  <span>{{ option.label }}</span>
+                  <CheckCircle2 v-if="option.key === draftTargetKey" :size="16" />
+                </button>
+              </div>
+            </div>
           </div>
 
           <div v-if="editorAnchors.length" class="timestamp-row">
@@ -1031,12 +1110,13 @@ onUnmounted(() => {
               class="note-card"
               :class="{
                 selected: selectedNoteIds.has(card.note.id),
-                selectable: selectionMode || trashMode,
+                selectable: selectionMode,
+                inert: trashMode && !selectionMode,
               }"
               @click="openEditor(card)"
             >
               <button
-                v-if="selectionMode || trashMode"
+                v-if="selectionMode"
                 class="select-mark"
                 @click.stop="toggleNoteSelection(card.note.id)"
               >
@@ -1244,6 +1324,15 @@ onUnmounted(() => {
   color: var(--error);
 }
 
+.selection-summary {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .tool-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -1287,6 +1376,16 @@ onUnmounted(() => {
 
 .note-card.selectable {
   cursor: default;
+}
+
+.note-card.inert {
+  cursor: default;
+}
+
+.note-card.inert:hover {
+  transform: none;
+  border-color: var(--outline-variant);
+  box-shadow: var(--shadow-ambient);
 }
 
 .select-mark {
@@ -1452,15 +1551,134 @@ onUnmounted(() => {
   font-weight: 800;
 }
 
-.target-row select {
+.target-dropdown {
+  position: relative;
   min-width: 240px;
   max-width: 100%;
-  padding: 10px 12px;
+}
+
+.target-trigger {
+  position: relative;
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 40px 11px 14px;
   border: 1px solid var(--outline-variant);
-  border-radius: 10px;
-  background-color: var(--surface-low);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 88%, white), var(--surface-low));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.target-trigger::after {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--on-surface-variant);
+  border-bottom: 2px solid var(--on-surface-variant);
+  content: '';
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.target-trigger:hover {
+  border-color: var(--primary-container);
+}
+
+.target-trigger:focus-visible {
+  border-color: var(--primary);
+  background-color: var(--surface);
+  box-shadow:
+    0 0 0 3px var(--primary-light),
+    var(--shadow-soft);
   outline: none;
+}
+
+.target-dropdown.open .target-trigger {
+  border-color: var(--primary);
+  border-bottom-right-radius: 6px;
+  border-bottom-left-radius: 6px;
+  box-shadow:
+    0 0 0 3px var(--primary-light),
+    var(--shadow-soft);
+}
+
+.target-dropdown.open .target-trigger::after {
+  transform: translateY(-35%) rotate(225deg);
+}
+
+.target-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.target-trigger-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-menu {
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  overflow: hidden auto;
+  max-height: 280px;
+  border: 1px solid var(--primary);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+  background: color-mix(in srgb, var(--surface) 92%, white);
+  box-shadow: 0 18px 36px rgba(26, 28, 26, 0.16);
+}
+
+.target-option {
+  width: 100%;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.target-option + .target-option {
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 75%, transparent);
+}
+
+.target-option:hover,
+.target-option.active {
+  background-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.target-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.target-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.target-menu::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: color-mix(in srgb, var(--on-surface-variant) 35%, transparent);
 }
 
 .timestamp-row {

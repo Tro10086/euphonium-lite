@@ -1,58 +1,140 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { uiState } from '@/ui/stores/uiState'
-import { Plus, Trash2, GripVertical } from 'lucide-vue-next'
+import { GripVertical, Plus, Trash2 } from 'lucide-vue-next'
+import type { UserCollection } from '@/models/Collection'
+import { collectionAPI } from '@/services/storage'
+import { builtinNavItems, rebuildNavItems, type NavItem, uiState } from '@/ui/stores/uiState'
 import BaseModal from './BaseModal.vue'
 
-interface NavItem {
-  id: string
-  label: string
+interface LocalNavItem extends NavItem {
+  builtin: boolean
 }
 
-const localNavItems = ref<NavItem[]>([])
+const localNavItems = ref<LocalNavItem[]>([])
+const localCollections = ref<UserCollection[]>([])
 const newCollectionName = ref('')
 const draggedIndex = ref<number | null>(null)
+const isSaving = ref(false)
 
-// Initialize local list when modal opens
+const builtinIds = new Set(builtinNavItems.map((item) => item.id))
+
+const cloneCollection = (collection: UserCollection, order: number): UserCollection => ({
+  ...collection,
+  animeIds: [...collection.animeIds],
+  order,
+})
+
+const buildLocalNavItems = (
+  collections: UserCollection[],
+  orderIds: string[] = uiState.navItems.map((item) => item.id),
+): LocalNavItem[] => {
+  const builtinsById = new Map(builtinNavItems.map((item) => [item.id, item]))
+  const customsById = new Map(collections.map((collection) => [collection.id, collection]))
+  const defaultIds = [...builtinNavItems.map((item) => item.id), ...collections.map((item) => item.id)]
+  const mergedIds = [
+    ...orderIds.filter((id) => builtinsById.has(id) || customsById.has(id)),
+    ...defaultIds.filter((id) => !orderIds.includes(id)),
+  ]
+
+  return mergedIds
+    .map((id) => {
+      const builtin = builtinsById.get(id)
+      if (builtin) return { ...builtin, builtin: true }
+
+      const collection = customsById.get(id)
+      if (!collection) return null
+      return {
+        id: collection.id,
+        label: collection.label,
+        builtin: false,
+      }
+    })
+    .filter((item): item is LocalNavItem => Boolean(item))
+}
+
 watch(
   () => uiState.isCollectionModalOpen,
   (isOpen) => {
-    if (isOpen) {
-      localNavItems.value = [...uiState.navItems]
-    }
+    if (!isOpen) return
+    localCollections.value = uiState.customCollections.map((collection, index) =>
+      cloneCollection(collection, index),
+    )
+    localNavItems.value = buildLocalNavItems(localCollections.value)
+    newCollectionName.value = ''
+    draggedIndex.value = null
   },
 )
 
 const addCollection = () => {
-  if (newCollectionName.value.trim()) {
-    localNavItems.value.push({
-      id: 'custom-' + Date.now(),
-      label: newCollectionName.value.trim(),
-    })
-    newCollectionName.value = ''
+  const label = newCollectionName.value.trim()
+  if (!label) return
+
+  const now = new Date()
+  const collection: UserCollection = {
+    id: `collection-${crypto.randomUUID()}`,
+    label,
+    animeIds: [],
+    order: localCollections.value.length,
+    created_at: now,
+    updated_at: now,
   }
+
+  localCollections.value.push(collection)
+  localNavItems.value.push({
+    id: collection.id,
+    label: collection.label,
+    builtin: false,
+  })
+  newCollectionName.value = ''
 }
 
 const removeCollection = (id: string) => {
+  if (builtinIds.has(id)) return
+
+  localCollections.value = localCollections.value
+    .filter((item) => item.id !== id)
+    .map((item, index) => cloneCollection(item, index))
   localNavItems.value = localNavItems.value.filter((item) => item.id !== id)
 }
 
-const commitChanges = () => {
-  uiState.navItems = [...localNavItems.value]
-  // If the currently filtered collection was removed, fallback to 'all'
-  if (!uiState.navItems.find((item) => item.id === uiState.homeFilter)) {
-    uiState.homeFilter = 'all'
+const commitChanges = async () => {
+  if (isSaving.value) return
+  isSaving.value = true
+
+  try {
+    const customIdsInOrder = localNavItems.value
+      .filter((item) => !item.builtin)
+      .map((item) => item.id)
+    const collectionById = new Map(localCollections.value.map((collection) => [collection.id, collection]))
+    const orderedCollections = customIdsInOrder
+      .map((id, index) => {
+        const collection = collectionById.get(id)
+        return collection ? cloneCollection(collection, index) : null
+      })
+      .filter((item): item is UserCollection => Boolean(item))
+
+    const savedCollections = await collectionAPI.replaceAll(orderedCollections)
+    rebuildNavItems(savedCollections, localNavItems.value.map((item) => item.id))
+
+    if (
+      uiState.homeFilter.startsWith('collection-') &&
+      !savedCollections.some((item) => item.id === uiState.homeFilter)
+    ) {
+      uiState.homeFilter = 'all'
+    }
+
+    uiState.isCollectionModalOpen = false
+  } finally {
+    isSaving.value = false
   }
-  uiState.isCollectionModalOpen = false
 }
 
-// Drag and drop handlers
 const onDragStart = (index: number) => {
   draggedIndex.value = index
 }
 
-const onDragOver = (e: DragEvent) => {
-  e.preventDefault()
+const onDragOver = (event: DragEvent) => {
+  event.preventDefault()
 }
 
 const onDrop = (index: number) => {
@@ -72,7 +154,7 @@ const onDrop = (index: number) => {
       <input
         v-model="newCollectionName"
         type="text"
-        placeholder="新合集名称..."
+        placeholder="新建合集名称..."
         @keyup.enter="addCollection"
       />
       <button class="btn-add" @click="addCollection">
@@ -95,7 +177,7 @@ const onDrop = (index: number) => {
         <GripVertical :size="16" class="drag-handle" />
         <span class="item-label">{{ item.label }}</span>
         <button
-          v-if="!['all', 'recent', 'fav', 'trash'].includes(item.id)"
+          v-if="!item.builtin"
           class="btn-delete"
           @click="removeCollection(item.id)"
         >
@@ -105,7 +187,9 @@ const onDrop = (index: number) => {
     </div>
 
     <template #footer>
-      <button class="btn-primary" @click="commitChanges">完成</button>
+      <button class="btn-primary" :disabled="isSaving" @click="void commitChanges()">
+        {{ isSaving ? '保存中...' : '完成' }}
+      </button>
     </template>
   </BaseModal>
 </template>
@@ -202,5 +286,10 @@ const onDrop = (index: number) => {
   border-radius: 12px;
   font-weight: 600;
   box-shadow: var(--shadow-soft);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

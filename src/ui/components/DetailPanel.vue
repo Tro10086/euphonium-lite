@@ -80,11 +80,11 @@ const toggleFavorite = async () => {
         <X :size="20" />
       </button>
       <div class="actions">
-        <button class="icon-btn-round" :class="{ active: selectedMedia.isFavorite }" @click="toggleFavorite">
+        <button class="plain-heart-btn" :class="{ active: selectedMedia.isFavorite }" @click="toggleFavorite">
           <Heart
-            :size="20"
-            class="heart-icon"
-            :fill="selectedMedia.isFavorite ? 'currentColor' : 'none'"
+            :size="22"
+            :fill="selectedMedia.isFavorite ? '#c62828' : 'none'"
+            :color="selectedMedia.isFavorite ? '#c62828' : 'currentColor'"
           />
         </button>
       </div>
@@ -203,7 +203,7 @@ const toggleFavorite = async () => {
   flex-shrink: 0;
 }
 
-.close-btn, .icon-btn-round {
+.close-btn {
   width: 40px;
   height: 40px;
   display: flex;
@@ -220,13 +220,16 @@ const toggleFavorite = async () => {
   color: var(--primary);
 }
 
-.heart-icon {
-  color: var(--primary);
+.plain-heart-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--on-surface-variant);
+  transition: all 0.3s ease;
 }
 
-.icon-btn-round.active {
-  color: var(--primary);
-  background-color: var(--primary-light);
+.plain-heart-btn:hover {
+  transform: scale(1.1);
 }
 
 .panel-content {

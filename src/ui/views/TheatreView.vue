@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { Anime, Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 import type { TipTapJSON } from '@/models/Note'
-import { animeAPI, episodeAPI, fileAPI } from '@/services/storage'
+import { animeAPI, episodeAPI, fileAPI, libraryRootAPI } from '@/services/storage'
 import { createPlaybackUrl, revokePlaybackUrl } from '@/services/playback'
 import { attachmentAPI, notesAPI } from '@/services/notes'
 import { uiState } from '@/ui/stores/uiState'
@@ -19,6 +19,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Captions,
+  Gauge,
   Heart,
   SkipBack,
   SkipForward,
@@ -34,6 +36,8 @@ const filesByEpisode = ref<Record<string, VideoFile[]>>({})
 const isLoading = ref(false)
 const playbackError = ref('')
 const videoUrl = ref('')
+const subtitleUrl = ref('')
+const subtitleLabel = ref('')
 const noteId = ref<string | null>(null)
 const noteText = ref('')
 const noteAttachmentIds = ref<string[]>([])
@@ -73,16 +77,25 @@ const media = computed(() => {
   }
 })
 
-const episodeRows = computed(() => {
+const allEpisodeRows = computed(() => {
   if (!hasRealData.value) return []
 
   return realEpisodes.value.map((ep) => ({
     id: ep.id,
-    title: ep.name_cn || ep.name || `第 ${ep.ep} 集`,
+    title: ep.name_cn || ep.name || '未命名',
     ep: ep.ep,
     progress: ep.watch_percentage || 0,
   }))
 })
+const episodeRows = computed(() =>
+  allEpisodeRows.value
+    .map((ep, originalIndex) => ({
+      ...ep,
+      originalIndex,
+      fileCount: filesByEpisode.value[ep.id]?.length || 0,
+    }))
+    .filter((ep) => ep.fileCount > 0),
+)
 const activeEpisodeIdx = ref(0)
 const rating = ref(0)
 const isFavorited = ref(false)
@@ -96,12 +109,17 @@ const isMuted = ref(false)
 const currentSourceIdx = ref(0)
 const isSeeking = ref(false)
 const isSourcePickerOpen = ref(false)
+const isRatePickerOpen = ref(false)
 const isInfoDrawerOpen = ref(false)
+const isInfoPanelCollapsed = ref(false)
+const isCompactTheatre = ref(false)
 const playerFrameWidth = ref('100%')
 const playerFrameStyle = computed(() => ({
   width: playerFrameWidth.value,
 }))
 let playerResizeObserver: ResizeObserver | null = null
+const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 5]
+const playbackRate = ref(1)
 
 const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null)
 const currentFiles = computed(() => {
@@ -121,6 +139,28 @@ const progressPercent = computed(() => {
   if (!duration.value) return 0
   return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100))
 })
+const volumePercent = computed(() => Math.min(100, Math.max(0, volume.value)))
+const playbackRateLabel = computed(() => `${playbackRate.value}x`)
+const canPickSubtitle = computed(
+  () => typeof window !== 'undefined' && 'showOpenFilePicker' in window,
+)
+const activeEpisodeRowIndex = computed(() =>
+  episodeRows.value.findIndex((ep) => ep.originalIndex === activeEpisodeIdx.value),
+)
+const canGoPrevEpisode = computed(() => activeEpisodeRowIndex.value > 0)
+const canGoNextEpisode = computed(
+  () =>
+    activeEpisodeRowIndex.value >= 0 && activeEpisodeRowIndex.value < episodeRows.value.length - 1,
+)
+const isInfoPanelVisible = computed(() =>
+  isCompactTheatre.value ? isInfoDrawerOpen.value : !isInfoPanelCollapsed.value,
+)
+const infoPanelToggleLabel = computed(() =>
+  isInfoPanelVisible.value ? 'Collapse info panel' : 'Expand info panel',
+)
+const theatreContainerClass = computed(() => ({
+  'info-panel-collapsed': !isCompactTheatre.value && isInfoPanelCollapsed.value,
+}))
 
 const updatePlayerFrame = () => {
   const section = playerSectionRef.value
@@ -136,6 +176,21 @@ const updatePlayerFrame = () => {
   }
 
   playerFrameWidth.value = `${Math.floor(Math.min(width, (height * 16) / 9))}px`
+}
+
+const updateTheatreMode = () => {
+  isCompactTheatre.value =
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 1180px)').matches
+}
+
+const toggleInfoPanel = () => {
+  if (isCompactTheatre.value) {
+    isInfoDrawerOpen.value = !isInfoDrawerOpen.value
+    return
+  }
+
+  isInfoPanelCollapsed.value = !isInfoPanelCollapsed.value
+  requestAnimationFrame(updatePlayerFrame)
 }
 
 const togglePlay = async () => {
@@ -162,10 +217,35 @@ const toggleMute = () => {
   isMuted.value = !isMuted.value
   if (videoRef.value) videoRef.value.muted = isMuted.value
 }
-const toggleSourcePicker = () => (isSourcePickerOpen.value = !isSourcePickerOpen.value)
+const toggleSourcePicker = () => {
+  isSourcePickerOpen.value = !isSourcePickerOpen.value
+  if (isSourcePickerOpen.value) isRatePickerOpen.value = false
+}
 const selectSource = (index: number) => {
   currentSourceIdx.value = index
   isSourcePickerOpen.value = false
+}
+const toggleRatePicker = () => {
+  isRatePickerOpen.value = !isRatePickerOpen.value
+  if (isRatePickerOpen.value) isSourcePickerOpen.value = false
+}
+const selectPlaybackRate = (rate: number) => {
+  playbackRate.value = rate
+  isRatePickerOpen.value = false
+  if (videoRef.value) videoRef.value.playbackRate = rate
+}
+
+const setRating = async (value: number) => {
+  rating.value = value
+  if (!realAnime.value) return
+
+  await animeAPI.update(realAnime.value.id, { rating: value })
+  realAnime.value = {
+    ...realAnime.value,
+    rating: value,
+    updated_at: new Date(),
+  }
+  uiState.libraryVersion += 1
 }
 
 const formatTime = (seconds: number) => {
@@ -174,6 +254,109 @@ const formatTime = (seconds: number) => {
   const m = Math.floor((safeSeconds % 3600) / 60)
   const s = Math.floor(safeSeconds % 60)
   return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
+const clearSubtitle = () => {
+  revokePlaybackUrl(subtitleUrl.value)
+  subtitleUrl.value = ''
+  subtitleLabel.value = ''
+}
+
+async function getSubtitleStartDirectory(file: VideoFile) {
+  if (!file.root_id) return null
+
+  const root = await libraryRootAPI.getById(file.root_id)
+  if (!root?.handle) return null
+
+  let permission = await root.handle.queryPermission({ mode: 'read' })
+  if (permission !== 'granted') {
+    permission = await root.handle.requestPermission({ mode: 'read' })
+  }
+  if (permission !== 'granted') return null
+
+  let directory = root.handle
+  const segments = (file.parent_path ?? '').split('/').filter(Boolean)
+  for (const segment of segments) {
+    directory = await directory.getDirectoryHandle(segment)
+  }
+
+  return directory
+}
+
+function srtToVtt(text: string) {
+  const blocks = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split(/\n{2,}/)
+    .map((block) =>
+      block
+        .split('\n')
+        .filter((line, index) => !(index === 0 && /^\d+$/.test(line.trim())))
+        .join('\n'),
+    )
+    .join('\n\n')
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+
+  return `WEBVTT\n\n${blocks}`
+}
+
+async function createSubtitleUrl(file: File) {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  if (ext === 'vtt') return URL.createObjectURL(file)
+  if (ext === 'srt') {
+    const vtt = srtToVtt(await file.text())
+    return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }))
+  }
+  throw new Error('当前只支持 .vtt 和 .srt 字幕')
+}
+
+async function pickSubtitleFile() {
+  if (!canPickSubtitle.value) {
+    playbackError.value = '当前浏览器不支持从视频文件夹选择字幕'
+    return
+  }
+
+  const file = activeVideoFile.value
+  if (!file) return
+
+  try {
+    const startIn = await getSubtitleStartDirectory(file)
+    if (!startIn) {
+      playbackError.value = '无法定位视频所在文件夹'
+      return
+    }
+
+    const handles = await window.showOpenFilePicker({
+      multiple: false,
+      startIn,
+      types: [
+        {
+          description: '字幕文件',
+          accept: {
+            'text/vtt': ['.vtt'],
+            'application/x-subrip': ['.srt'],
+          },
+        },
+      ],
+      excludeAcceptAllOption: false,
+    })
+    const handle = handles[0]
+    if (!handle) return
+
+    const subtitleFile = await handle.getFile()
+    const url = await createSubtitleUrl(subtitleFile)
+    clearSubtitle()
+    subtitleUrl.value = url
+    subtitleLabel.value = subtitleFile.name
+    playbackError.value = ''
+
+    await nextTick()
+    const tracks = videoRef.value?.textTracks
+    if (tracks?.length) tracks[tracks.length - 1]!.mode = 'showing'
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return
+    playbackError.value = error instanceof Error ? error.message : String(error)
+  }
 }
 
 const getRouteEpisodeId = () => {
@@ -256,34 +439,11 @@ function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
   }
 }
 
-function plainTextFromTipTapJson(json: TipTapJSON): string {
-  const lines: string[] = []
-  const walk = (node: TipTapJSON) => {
-    if (node.type === 'paragraph') {
-      lines.push((node.content ?? []).map((child) => child.text ?? '').join(''))
-      return
-    }
-    for (const child of node.content ?? []) walk(child)
-  }
-  walk(json)
-  return lines.join('\n').trim()
-}
-
 async function loadNote() {
   noteMessage.value = ''
   noteId.value = null
   noteText.value = ''
   noteAttachmentIds.value = []
-  const targetId = noteTargetId.value
-  if (!targetId) return
-
-  const notes = await notesAPI.getByTarget(noteTargetType.value, targetId)
-  const note = notes[0]
-  if (!note) return
-
-  noteId.value = note.id
-  noteText.value = note.plainText || plainTextFromTipTapJson(note.tiptapJson)
-  noteAttachmentIds.value = [...note.attachmentIds]
 }
 
 async function saveNote(message = '笔记已保存') {
@@ -366,6 +526,7 @@ const saveProgressThrottled = () => {
 }
 
 const setEpisode = async (index: number) => {
+  if (!realEpisodes.value[index]) return
   await saveProgress()
   await saveNote('笔记已自动保存')
   activeEpisodeIdx.value = index
@@ -384,13 +545,18 @@ const setEpisode = async (index: number) => {
 }
 
 const prevEpisode = () => {
-  if (activeEpisodeIdx.value > 0) void setEpisode(activeEpisodeIdx.value - 1)
+  const rowIndex = activeEpisodeRowIndex.value
+  const target = rowIndex > 0 ? episodeRows.value[rowIndex - 1] : null
+  if (target) void setEpisode(target.originalIndex)
 }
 
 const nextEpisode = () => {
-  if (activeEpisodeIdx.value < episodeRows.value.length - 1) {
-    void setEpisode(activeEpisodeIdx.value + 1)
-  }
+  const rowIndex = activeEpisodeRowIndex.value
+  const target =
+    rowIndex >= 0 && rowIndex < episodeRows.value.length - 1
+      ? episodeRows.value[rowIndex + 1]
+      : null
+  if (target) void setEpisode(target.originalIndex)
 }
 
 const onProgressInput = (e: Event) => {
@@ -451,6 +617,7 @@ const loadTheatreData = async () => {
       currentTime.value = 0
       duration.value = 0
       isFavorited.value = false
+      rating.value = 0
       return
     }
 
@@ -463,6 +630,7 @@ const loadTheatreData = async () => {
 
     realAnime.value = anime
     isFavorited.value = Boolean(anime.is_favorite)
+    rating.value = anime.rating || 0
     realEpisodes.value = episodes
     filesByEpisode.value = Object.fromEntries(
       episodes.map((ep) => [
@@ -471,12 +639,19 @@ const loadTheatreData = async () => {
       ]),
     )
 
+    const playableEpisodeIndexes = episodes
+      .map((ep, index) => ({ index, fileCount: filesByEpisode.value[ep.id]?.length || 0 }))
+      .filter((ep) => ep.fileCount > 0)
+      .map((ep) => ep.index)
     const queryEpisodeId = getRouteEpisodeId()
     const queryEpisodeIdx = queryEpisodeId
       ? episodes.findIndex((ep) => ep.id === queryEpisodeId)
       : -1
     const resumeIdx = episodes.findIndex((ep) => ep.ep === anime.last_watched_episode)
-    activeEpisodeIdx.value = Math.max(0, queryEpisodeIdx >= 0 ? queryEpisodeIdx : resumeIdx)
+    const preferredIdx = queryEpisodeIdx >= 0 ? queryEpisodeIdx : resumeIdx
+    activeEpisodeIdx.value = playableEpisodeIndexes.includes(preferredIdx)
+      ? preferredIdx
+      : (playableEpisodeIndexes[0] ?? Math.max(0, preferredIdx))
     currentSourceIdx.value = 0
     currentTime.value =
       getRouteStartSeconds() ??
@@ -499,6 +674,7 @@ const onLoadedMetadata = () => {
   if (resumeAt > 0 && resumeAt < duration.value) video.currentTime = resumeAt
   video.volume = volume.value / 100
   video.muted = isMuted.value
+  video.playbackRate = playbackRate.value
 }
 
 const onTimeUpdate = () => {
@@ -526,6 +702,7 @@ const onVideoError = () => {
 }
 
 onMounted(() => {
+  updateTheatreMode()
   void loadTheatreData()
   requestAnimationFrame(updatePlayerFrame)
   if (playerSectionRef.value && typeof ResizeObserver !== 'undefined') {
@@ -533,13 +710,16 @@ onMounted(() => {
     playerResizeObserver.observe(playerSectionRef.value)
   }
   window.addEventListener('resize', updatePlayerFrame)
+  window.addEventListener('resize', updateTheatreMode)
 })
 onUnmounted(() => {
   void saveProgress()
   void saveNote('笔记已自动保存')
   revokePlaybackUrl(videoUrl.value)
+  clearSubtitle()
   playerResizeObserver?.disconnect()
   window.removeEventListener('resize', updatePlayerFrame)
+  window.removeEventListener('resize', updateTheatreMode)
 })
 
 watch(
@@ -550,6 +730,7 @@ watch(
 )
 
 watch([activeVideoFile, activeEpisodeIdx], () => {
+  clearSubtitle()
   void loadPlaybackUrl()
 })
 
@@ -560,11 +741,15 @@ watch(noteTargetId, () => {
 watch(volume, (value) => {
   if (videoRef.value) videoRef.value.volume = value / 100
 })
+
+watch(playbackRate, (value) => {
+  if (videoRef.value) videoRef.value.playbackRate = value
+})
 </script>
 
 <template>
   <div class="theatre-view">
-    <div class="theatre-container">
+    <div class="theatre-container" :class="theatreContainerClass">
       <!-- Video Player Section -->
       <section ref="playerSectionRef" class="player-section">
         <div class="video-container group" :style="playerFrameStyle">
@@ -580,7 +765,16 @@ watch(volume, (value) => {
             @pause="onPause"
             @ended="onPause"
             @error="onVideoError"
-          ></video>
+          >
+            <track
+              v-if="subtitleUrl"
+              kind="subtitles"
+              srclang="zh"
+              :label="subtitleLabel || '字幕'"
+              :src="subtitleUrl"
+              default
+            />
+          </video>
           <img
             v-else-if="media.image"
             :src="media.image"
@@ -624,8 +818,8 @@ watch(volume, (value) => {
                 <button
                   class="control-icon"
                   @click="prevEpisode"
-                  :disabled="activeEpisodeIdx === 0"
-                  :class="{ disabled: activeEpisodeIdx === 0 }"
+                  :disabled="!canGoPrevEpisode"
+                  :class="{ disabled: !canGoPrevEpisode }"
                 >
                   <SkipBack :size="20" fill="currentColor" />
                 </button>
@@ -636,8 +830,8 @@ watch(volume, (value) => {
                 <button
                   class="control-icon"
                   @click="nextEpisode"
-                  :disabled="activeEpisodeIdx === episodeRows.length - 1"
-                  :class="{ disabled: activeEpisodeIdx === episodeRows.length - 1 }"
+                  :disabled="!canGoNextEpisode"
+                  :class="{ disabled: !canGoNextEpisode }"
                 >
                   <SkipForward :size="20" fill="currentColor" />
                 </button>
@@ -647,6 +841,24 @@ watch(volume, (value) => {
               </div>
 
               <div class="controls-right">
+                <div class="source-wrapper">
+                  <button class="source-picker rate-picker" title="倍速" @click="toggleRatePicker">
+                    <Gauge :size="14" />
+                    <span>{{ playbackRateLabel }}</span>
+                    <ChevronDown :size="14" />
+                  </button>
+                  <div v-if="isRatePickerOpen" class="source-dropdown rate-dropdown">
+                    <button
+                      v-for="rate in playbackRates"
+                      :key="rate"
+                      @click="selectPlaybackRate(rate)"
+                      :class="{ active: playbackRate === rate }"
+                    >
+                      {{ rate }}x
+                    </button>
+                  </div>
+                </div>
+
                 <div class="source-wrapper">
                   <button class="source-picker" @click="toggleSourcePicker">
                     <span>{{ sourceOptions[currentSourceIdx] }}</span>
@@ -664,13 +876,32 @@ watch(volume, (value) => {
                   </div>
                 </div>
 
+                <button
+                  v-if="canPickSubtitle"
+                  class="control-icon"
+                  :class="{ active: Boolean(subtitleUrl) }"
+                  :title="subtitleLabel || '加载字幕'"
+                  @click="pickSubtitleFile"
+                >
+                  <Captions :size="20" />
+                </button>
+
                 <div class="volume-container">
                   <button class="control-icon" @click="toggleMute">
                     <Volume2 v-if="!isMuted" :size="20" />
                     <VolumeX v-else :size="20" />
                   </button>
-                  <div class="volume-slider-wrap">
-                    <input type="range" v-model="volume" min="0" max="100" class="volume-slider" />
+                  <div
+                    class="volume-slider-wrap"
+                    :style="{ '--volume-percent': volumePercent + '%' }"
+                  >
+                    <input
+                      type="range"
+                      v-model.number="volume"
+                      min="0"
+                      max="100"
+                      class="volume-slider"
+                    />
                   </div>
                 </div>
 
@@ -686,13 +917,15 @@ watch(volume, (value) => {
       <!-- Info & Episodes Grid -->
       <button
         class="drawer-toggle"
+        :class="{ 'is-open': isInfoPanelVisible }"
         type="button"
-        :aria-expanded="isInfoDrawerOpen"
-        aria-label="Toggle info panel"
-        @click="isInfoDrawerOpen = !isInfoDrawerOpen"
+        :aria-expanded="isInfoPanelVisible"
+        :aria-label="infoPanelToggleLabel"
+        :title="infoPanelToggleLabel"
+        @click="toggleInfoPanel"
       >
-        <ChevronRight v-if="isInfoDrawerOpen" :size="22" />
-        <ChevronLeft v-else :size="22" />
+        <ChevronRight v-if="isInfoPanelVisible" :size="20" />
+        <ChevronLeft v-else :size="20" />
       </button>
 
       <section class="info-drawer" :class="{ open: isInfoDrawerOpen }">
@@ -735,7 +968,7 @@ watch(volume, (value) => {
               <div class="rating-action">
                 <span class="interaction-text">评分</span>
                 <div class="stars-list">
-                  <button v-for="i in 5" :key="i" @click="rating = i" class="star-btn">
+                  <button v-for="i in 5" :key="i" @click="setRating(i)" class="star-btn">
                     <Star
                       :size="20"
                       :fill="i <= rating ? 'url(#star-gradient)' : 'none'"
@@ -787,15 +1020,22 @@ watch(volume, (value) => {
             <h3 class="panel-title">选集</h3>
             <div class="episodes-list">
               <button
-                v-for="(ep, index) in episodeRows"
+                v-for="ep in episodeRows"
                 :key="ep.id"
                 class="episode-item"
-                :class="{ active: activeEpisodeIdx === index }"
-                @click="void setEpisode(index)"
+                :class="{ active: activeEpisodeIdx === ep.originalIndex }"
+                @click="void setEpisode(ep.originalIndex)"
               >
-                <span class="ep-title">{{ ep.title }}</span>
+                <span class="ep-main">
+                  <span class="ep-number">第 {{ ep.ep }} 集</span>
+                  <span class="ep-title">{{ ep.title }}</span>
+                </span>
                 <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
-                <PlayCircle v-if="activeEpisodeIdx === index" :size="16" class="active-dot-icon" />
+                <PlayCircle
+                  v-if="activeEpisodeIdx === ep.originalIndex"
+                  :size="16"
+                  class="active-dot-icon"
+                />
               </button>
             </div>
           </aside>
@@ -812,8 +1052,15 @@ watch(volume, (value) => {
 }
 
 .theatre-container {
+  --info-panel-width: clamp(300px, 24vw, 360px);
+  --drawer-handle-width: 30px;
+  --drawer-handle-height: 58px;
+  --drawer-handle-radius: 14px;
+  --drawer-handle-offset: 0px;
+  --volume-track-height: 4px;
+  --volume-thumb-size: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 360px);
+  grid-template-columns: minmax(0, 1fr) var(--info-panel-width);
   gap: 24px;
   align-items: stretch;
   width: 100%;
@@ -821,6 +1068,10 @@ watch(volume, (value) => {
   height: calc(100vh - 108px);
   min-height: 420px;
   margin: 0 auto;
+}
+
+.theatre-container.info-panel-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* Player Section */
@@ -1039,6 +1290,11 @@ watch(volume, (value) => {
   transform: scale(1.1);
 }
 
+.control-icon.active {
+  opacity: 1;
+  color: white;
+}
+
 .control-icon.disabled {
   opacity: 0.3;
   cursor: not-allowed;
@@ -1088,6 +1344,10 @@ watch(volume, (value) => {
   background-color: rgba(255, 255, 255, 0.2);
 }
 
+.rate-picker {
+  max-width: none;
+}
+
 .source-dropdown {
   position: absolute;
   bottom: calc(100% + 12px);
@@ -1122,6 +1382,12 @@ watch(volume, (value) => {
   background: rgba(255, 255, 255, 0.15);
 }
 
+.rate-dropdown {
+  min-width: 84px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 .volume-container {
   display: flex;
   align-items: center;
@@ -1131,60 +1397,119 @@ watch(volume, (value) => {
 
 .volume-slider-wrap {
   width: 0;
-  overflow: hidden; /* Added hidden to fix thumb showing when collapsed */
-  transition: width 0.3s ease;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    width 0.24s ease,
+    margin-left 0.24s ease,
+    opacity 0.18s ease;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 
 .volume-container:hover .volume-slider-wrap {
-  width: 80px; /* Adjusted back slightly for better fit */
+  width: 84px;
   margin-left: 8px;
+  overflow: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .volume-slider {
-  width: 80px;
-  height: 4px;
+  width: 72px;
+  height: 18px;
+  flex: 0 0 72px;
   appearance: none;
-  background: rgba(255, 255, 255, 0.2) !important;
-  border-radius: 2px;
+  margin: 0;
+  background: transparent;
   outline: none;
   cursor: pointer;
-  background-image: linear-gradient(
-    to right,
-    white 0%,
-    white v-bind('volume + "%"'),
-    transparent v-bind('volume + "%"')
-  ) !important;
 }
 
 .volume-slider::-webkit-slider-thumb {
   appearance: none;
-  width: 12px;
-  height: 12px;
+  width: var(--volume-thumb-size);
+  height: var(--volume-thumb-size);
   background: white;
   border-radius: 50%;
-  transition: transform 0.2s;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
-  margin-top: -4px; /* Center dot on 4px track */
+  border: none;
+  box-shadow: none;
+  margin-top: calc((var(--volume-track-height) - var(--volume-thumb-size)) / 2);
+}
+
+.volume-slider::-webkit-slider-runnable-track {
+  height: var(--volume-track-height);
+  background: linear-gradient(
+    to right,
+    white 0%,
+    white var(--volume-percent),
+    rgba(255, 255, 255, 0.24) var(--volume-percent),
+    rgba(255, 255, 255, 0.24) 100%
+  );
+  border-radius: 999px;
+}
+
+.volume-slider::-moz-range-track {
+  height: var(--volume-track-height);
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+}
+
+.volume-slider::-moz-range-progress {
+  height: var(--volume-track-height);
+  background: white;
+  border-radius: 999px;
 }
 
 .volume-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: var(--volume-thumb-size);
+  height: var(--volume-thumb-size);
   background: white;
   border-radius: 50%;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
   border: none;
-}
-
-.volume-slider:hover::-webkit-slider-thumb {
-  transform: scale(1.3);
+  box-shadow: none;
 }
 
 /* Info Grid */
 .drawer-toggle {
-  display: none;
+  position: fixed;
+  top: 50%;
+  right: calc(var(--info-panel-width) + var(--drawer-handle-offset));
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--drawer-handle-width);
+  height: var(--drawer-handle-height);
+  color: var(--on-surface);
+  background-color: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-left: 0;
+  border-radius: 0 var(--drawer-handle-radius) var(--drawer-handle-radius) 0;
+  opacity: 0.52;
+  box-shadow: -8px 12px 28px rgba(0, 0, 0, 0.1);
+  padding: 0;
+  transform: translateY(-50%);
+  transition:
+    right 0.24s ease,
+    color 0.2s ease,
+    opacity 0.2s ease,
+    border-radius 0.2s ease;
+}
+
+.drawer-toggle:hover {
+  color: var(--primary);
+  opacity: 1;
+}
+
+.theatre-container.info-panel-collapsed .drawer-toggle {
+  right: 0;
+  border-right: 0;
+  border-left: 1px solid var(--outline-variant);
+  border-radius: var(--drawer-handle-radius) 0 0 var(--drawer-handle-radius);
+  box-shadow: -8px 12px 28px rgba(0, 0, 0, 0.1);
 }
 
 .info-drawer {
@@ -1192,7 +1517,16 @@ watch(volume, (value) => {
   height: 100%;
   overflow-y: auto;
   padding-right: 4px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.info-drawer::-webkit-scrollbar,
+.episodes-list::-webkit-scrollbar {
+  display: none;
+}
+
+.theatre-container.info-panel-collapsed .info-drawer {
+  display: none;
 }
 
 .info-grid {
@@ -1412,7 +1746,7 @@ watch(volume, (value) => {
   gap: 8px;
   max-height: 320px;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .episode-item {
@@ -1447,12 +1781,30 @@ watch(volume, (value) => {
   filter: drop-shadow(0 0 5px var(--primary));
 }
 
-.ep-title {
+.ep-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ep-number,
+.ep-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ep-number {
+  flex: 0 0 auto;
+}
+
+.ep-title {
+  flex: 1;
 }
 
 .ep-progress {
@@ -1465,30 +1817,29 @@ watch(volume, (value) => {
 
 @media (max-width: 1180px) {
   .theatre-container {
+    --info-panel-width: min(360px, calc(100vw - 56px));
     grid-template-columns: minmax(0, 1fr);
   }
 
   .drawer-toggle {
-    position: fixed;
-    top: 50%;
     right: 0;
-    z-index: 80;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 72px;
-    color: var(--on-surface);
-    background-color: var(--surface);
-    border: 1px solid var(--outline-variant);
+    width: 32px;
+    height: 66px;
     border-right: 0;
-    border-radius: 14px 0 0 14px;
+    border-left: 1px solid var(--outline-variant);
+    border-radius: var(--drawer-handle-radius) 0 0 var(--drawer-handle-radius);
     box-shadow: -8px 12px 32px rgba(0, 0, 0, 0.12);
-    transform: translateY(-50%);
   }
 
   .drawer-toggle:hover {
     color: var(--primary);
+  }
+
+  .drawer-toggle.is-open {
+    right: calc(var(--info-panel-width) + var(--drawer-handle-offset));
+    border-left: 0;
+    border-right: 1px solid var(--outline-variant);
+    border-radius: 0 var(--drawer-handle-radius) var(--drawer-handle-radius) 0;
   }
 
   .info-drawer {
@@ -1496,7 +1847,7 @@ watch(volume, (value) => {
     top: 60px;
     right: 0;
     z-index: 70;
-    width: min(360px, calc(100vw - 56px));
+    width: var(--info-panel-width);
     height: calc(100vh - 60px);
     padding: 24px 16px 24px 20px;
     background-color: var(--background);
@@ -1514,6 +1865,10 @@ watch(volume, (value) => {
   .theatre-view,
   .theatre-container {
     min-height: calc(100vh - 108px);
+  }
+
+  .theatre-container {
+    --info-panel-width: min(340px, calc(100vw - 48px));
   }
 
   .video-container {
@@ -1569,12 +1924,16 @@ watch(volume, (value) => {
   }
 
   .drawer-toggle {
-    width: 40px;
-    height: 64px;
+    width: 30px;
+    height: 62px;
+  }
+
+  .drawer-toggle.is-open {
+    right: calc(var(--info-panel-width) + var(--drawer-handle-offset));
   }
 
   .info-drawer {
-    width: min(340px, calc(100vw - 48px));
+    width: var(--info-panel-width);
     padding: 20px 14px 20px 18px;
   }
 
@@ -1594,22 +1953,4 @@ watch(volume, (value) => {
   }
 }
 
-/* Range input overrides */
-input[type='range'] {
-  width: 100%;
-  height: 4px;
-  border-radius: 2px;
-  appearance: none;
-  background: transparent;
-}
-
-input[type='range']::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  background: white;
-  border-radius: 50%;
-  cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-}
 </style>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { uiState } from '@/ui/stores/uiState'
 import { LayoutGrid, Clock, Heart, Trash, Settings2, Folder } from 'lucide-vue-next'
 import BaseButton from './BaseButton.vue'
+import { uiState } from '@/ui/stores/uiState'
 
 const getIcon = (id: string) => {
   switch (id) {

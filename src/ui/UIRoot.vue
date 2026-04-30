@@ -2,7 +2,8 @@
 import { computed, watch, onMounted, onUnmounted } from 'vue';
 import { RouterView, useRoute } from 'vue-router';
 import './index.css';
-import { uiState } from './stores/uiState';
+import { collectionAPI } from '@/services/storage';
+import { rebuildNavItems, uiState } from './stores/uiState';
 import SideNav from './components/SideNav.vue';
 import TopBar from './components/TopBar.vue';
 import DetailPanel from './components/DetailPanel.vue';
@@ -32,10 +33,11 @@ const handleSystemThemeChange = () => {
   if (uiState.settings.theme === 'system') updateTheme();
 };
 
-onMounted(() => {
+onMounted(async () => {
   updateTheme();
   document.documentElement.classList.remove('compact-mode');
   mediaQuery.addEventListener('change', handleSystemThemeChange);
+  rebuildNavItems(await collectionAPI.getAll());
 });
 
 onUnmounted(() => {
