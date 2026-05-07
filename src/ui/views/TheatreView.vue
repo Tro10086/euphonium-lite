@@ -113,7 +113,10 @@ const isRatePickerOpen = ref(false)
 const isInfoDrawerOpen = ref(false)
 const isInfoPanelCollapsed = ref(false)
 const isCompactTheatre = ref(false)
+const isMediaDescExpanded = ref(false)
+const showMediaDescToggle = ref(false)
 const playerFrameWidth = ref('100%')
+const mediaDescRef = ref<HTMLElement | null>(null)
 const playerFrameStyle = computed(() => ({
   width: playerFrameWidth.value,
 }))
@@ -181,6 +184,21 @@ const updatePlayerFrame = () => {
 const updateTheatreMode = () => {
   isCompactTheatre.value =
     typeof window !== 'undefined' && window.matchMedia('(max-width: 1180px)').matches
+}
+
+const checkMediaDescriptionOverflow = () => {
+  void nextTick(() => {
+    const el = mediaDescRef.value
+    if (!el) {
+      showMediaDescToggle.value = false
+      return
+    }
+
+    const wasExpanded = isMediaDescExpanded.value
+    if (wasExpanded) el.classList.remove('is-expanded')
+    showMediaDescToggle.value = el.scrollHeight > el.clientHeight + 2
+    if (wasExpanded) el.classList.add('is-expanded')
+  })
 }
 
 const toggleInfoPanel = () => {
@@ -704,6 +722,7 @@ const onVideoError = () => {
 onMounted(() => {
   updateTheatreMode()
   void loadTheatreData()
+  checkMediaDescriptionOverflow()
   requestAnimationFrame(updatePlayerFrame)
   if (playerSectionRef.value && typeof ResizeObserver !== 'undefined') {
     playerResizeObserver = new ResizeObserver(updatePlayerFrame)
@@ -711,6 +730,7 @@ onMounted(() => {
   }
   window.addEventListener('resize', updatePlayerFrame)
   window.addEventListener('resize', updateTheatreMode)
+  window.addEventListener('resize', checkMediaDescriptionOverflow)
 })
 onUnmounted(() => {
   void saveProgress()
@@ -720,12 +740,21 @@ onUnmounted(() => {
   playerResizeObserver?.disconnect()
   window.removeEventListener('resize', updatePlayerFrame)
   window.removeEventListener('resize', updateTheatreMode)
+  window.removeEventListener('resize', checkMediaDescriptionOverflow)
 })
 
 watch(
   () => [route.params.id, route.query.episodeId, route.query.t],
   () => {
     void loadTheatreData()
+  },
+)
+
+watch(
+  () => media.value.desc,
+  () => {
+    isMediaDescExpanded.value = false
+    checkMediaDescriptionOverflow()
   },
 )
 
@@ -935,12 +964,13 @@ watch(playbackRate, (value) => {
             <header class="media-header">
               <div class="title-wrap">
                 <h1 class="media-title">{{ media.title }}</h1>
-                <div class="tags">
+                <div v-if="media.tags.length" class="tags">
                   <span v-for="tag in media.tags" :key="tag" class="tag">{{ tag }}</span>
-                  <span class="meta-dot"></span>
-                  <span>{{ media.year }}</span>
-                  <span class="meta-dot"></span>
-                  <span>{{ media.episodes }} 集</span>
+                </div>
+                <div class="media-meta">
+                  <span v-if="media.year">{{ media.year }}</span>
+                  <span v-if="media.year && media.episodes" class="meta-dot"></span>
+                  <span v-if="media.episodes">{{ media.episodes }} 集</span>
                 </div>
               </div>
               <div class="score-wrap">
@@ -991,7 +1021,23 @@ watch(playbackRate, (value) => {
               </div>
             </div>
 
-            <p class="media-desc">{{ media.desc }}</p>
+            <div class="media-desc-wrap">
+              <p
+                ref="mediaDescRef"
+                class="media-desc"
+                :class="{ 'is-expanded': isMediaDescExpanded }"
+              >
+                {{ media.desc }}
+              </p>
+              <button
+                v-if="showMediaDescToggle"
+                class="media-desc-toggle"
+                type="button"
+                @click="isMediaDescExpanded = !isMediaDescExpanded"
+              >
+                {{ isMediaDescExpanded ? '收起' : '展开全部' }}
+              </button>
+            </div>
 
             <section class="notes-panel">
               <header class="notes-header">
@@ -1053,10 +1099,10 @@ watch(playbackRate, (value) => {
 
 .theatre-container {
   --info-panel-width: clamp(300px, 24vw, 360px);
-  --drawer-handle-width: 30px;
+  --drawer-handle-width: 20px;
   --drawer-handle-height: 58px;
   --drawer-handle-radius: 14px;
-  --drawer-handle-offset: 0px;
+  --drawer-handle-offset: 27px;
   --volume-track-height: 4px;
   --volume-thumb-size: 8px;
   display: grid;
@@ -1486,9 +1532,9 @@ watch(playbackRate, (value) => {
   color: var(--on-surface);
   background-color: var(--surface);
   border: 1px solid var(--outline-variant);
-  border-left: 0;
-  border-radius: 0 var(--drawer-handle-radius) var(--drawer-handle-radius) 0;
-  opacity: 0.52;
+  border-right: 0;
+  border-radius: var(--drawer-handle-radius) 0 0 var(--drawer-handle-radius);
+  opacity: 0.2;
   box-shadow: -8px 12px 28px rgba(0, 0, 0, 0.1);
   padding: 0;
   transform: translateY(-50%);
@@ -1554,6 +1600,13 @@ watch(playbackRate, (value) => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.media-meta {
+  display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
   font-size: 14px;
@@ -1652,7 +1705,26 @@ watch(playbackRate, (value) => {
   font-size: 14px;
   line-height: 1.65;
   color: var(--on-surface-variant);
+  display: -webkit-box;
+  margin: 0;
   overflow-wrap: anywhere;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.media-desc.is-expanded {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+.media-desc-toggle {
+  margin-top: 6px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .notes-panel {
@@ -1823,8 +1895,6 @@ watch(playbackRate, (value) => {
 
   .drawer-toggle {
     right: 0;
-    width: 32px;
-    height: 66px;
     border-right: 0;
     border-left: 1px solid var(--outline-variant);
     border-radius: var(--drawer-handle-radius) 0 0 var(--drawer-handle-radius);
@@ -1836,10 +1906,9 @@ watch(playbackRate, (value) => {
   }
 
   .drawer-toggle.is-open {
-    right: calc(var(--info-panel-width) + var(--drawer-handle-offset));
+    right: var(--info-panel-width);
     border-left: 0;
     border-right: 1px solid var(--outline-variant);
-    border-radius: 0 var(--drawer-handle-radius) var(--drawer-handle-radius) 0;
   }
 
   .info-drawer {
@@ -1921,15 +1990,6 @@ watch(playbackRate, (value) => {
     right: 16px;
     left: 16px;
     font-size: 12px;
-  }
-
-  .drawer-toggle {
-    width: 30px;
-    height: 62px;
-  }
-
-  .drawer-toggle.is-open {
-    right: calc(var(--info-panel-width) + var(--drawer-handle-offset));
   }
 
   .info-drawer {
