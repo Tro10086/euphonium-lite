@@ -123,6 +123,10 @@ const playerFrameStyle = computed(() => ({
 let playerResizeObserver: ResizeObserver | null = null
 const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 5]
 const playbackRate = ref(1)
+const noRenderableVideoMessage =
+  '当前浏览器只解码出了声音，没有可显示的视频画面。通常是视频编码或封装不受原生播放器支持，请换用 H.264/AAC MP4 或 WebM，或先转码后播放。'
+let shouldPlayOnReady = false
+let videoFrameCheckTimer: number | null = null
 
 const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null)
 const currentFiles = computed(() => {
@@ -186,6 +190,54 @@ const updateTheatreMode = () => {
     typeof window !== 'undefined' && window.matchMedia('(max-width: 1180px)').matches
 }
 
+const clearVideoFrameCheck = () => {
+  if (videoFrameCheckTimer === null) return
+  window.clearTimeout(videoFrameCheckTimer)
+  videoFrameCheckTimer = null
+}
+
+const reportNoRenderableVideo = (video: HTMLVideoElement) => {
+  if (playbackError.value === noRenderableVideoMessage) return
+
+  video.pause()
+  isPlaying.value = false
+  playbackError.value = noRenderableVideoMessage
+}
+
+const checkRenderableVideoFrame = () => {
+  const video = videoRef.value
+  if (!video || !videoUrl.value || playbackError.value) return
+
+  const hasLoadedMediaData = video.readyState >= 2
+  const hasRenderableFrame = video.videoWidth > 0 && video.videoHeight > 0
+  if (hasLoadedMediaData && !hasRenderableFrame) reportNoRenderableVideo(video)
+}
+
+const scheduleVideoFrameCheck = (delay = 1200) => {
+  clearVideoFrameCheck()
+  if (!videoUrl.value) return
+
+  videoFrameCheckTimer = window.setTimeout(() => {
+    videoFrameCheckTimer = null
+    checkRenderableVideoFrame()
+  }, delay)
+}
+
+const playWhenReadyIfRequested = async () => {
+  if (!shouldPlayOnReady) return
+
+  const video = videoRef.value
+  if (!video) return
+
+  shouldPlayOnReady = false
+  try {
+    await video.play()
+    playbackError.value = ''
+  } catch {
+    playbackError.value = '浏览器阻止了自动播放，请手动点击播放。'
+  }
+}
+
 const checkMediaDescriptionOverflow = () => {
   void nextTick(() => {
     const el = mediaDescRef.value
@@ -222,7 +274,10 @@ const togglePlay = async () => {
   }
 
   const video = videoRef.value
-  if (!video) return
+  if (!video) {
+    shouldPlayOnReady = true
+    return
+  }
 
   try {
     if (video.paused) await video.play()
@@ -240,6 +295,12 @@ const toggleSourcePicker = () => {
   if (isSourcePickerOpen.value) isRatePickerOpen.value = false
 }
 const selectSource = (index: number) => {
+  if (index === currentSourceIdx.value) {
+    isSourcePickerOpen.value = false
+    return
+  }
+
+  shouldPlayOnReady = isPlaying.value || Boolean(videoRef.value && !videoRef.value.paused)
   currentSourceIdx.value = index
   isSourcePickerOpen.value = false
 }
@@ -318,6 +379,92 @@ function srtToVtt(text: string) {
   return `WEBVTT\n\n${blocks}`
 }
 
+function assTimeToVtt(value: string) {
+  const match = value.trim().match(/^(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/)
+  if (!match) return ''
+
+  const hours = Number.parseInt(match[1]!, 10)
+  const minutes = Number.parseInt(match[2]!, 10)
+  const seconds = Number.parseInt(match[3]!, 10)
+  const milliseconds = Number.parseInt((match[4] ?? '0').padEnd(3, '0').slice(0, 3), 10)
+
+  return `${hours.toString().padStart(2, '0')}:${minutes
+    .toString()
+    .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds
+    .toString()
+    .padStart(3, '0')}`
+}
+
+function splitAssFields(value: string, fieldCount: number) {
+  if (fieldCount <= 1) return [value]
+
+  const parts = value.split(',')
+  if (parts.length <= fieldCount) return parts
+
+  return [...parts.slice(0, fieldCount - 1), parts.slice(fieldCount - 1).join(',')]
+}
+
+function stripAssText(value: string) {
+  return value
+    .replace(/{[^}]*}/g, '')
+    .replace(/\\[Nn]/g, '\n')
+    .replace(/\\h/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+function assToVtt(text: string) {
+  const defaultFormat = [
+    'layer',
+    'start',
+    'end',
+    'style',
+    'name',
+    'marginl',
+    'marginr',
+    'marginv',
+    'effect',
+    'text',
+  ]
+  let eventFormat = defaultFormat
+  const cues: string[] = []
+
+  for (const rawLine of text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split('\n')) {
+    const line = rawLine.trim()
+    if (/^Format\s*:/i.test(line)) {
+      eventFormat = line
+        .replace(/^Format\s*:/i, '')
+        .split(',')
+        .map((field) => field.trim().toLowerCase())
+      continue
+    }
+
+    if (!/^Dialogue\s*:/i.test(line)) continue
+
+    const fields = splitAssFields(line.replace(/^Dialogue\s*:/i, '').trim(), eventFormat.length)
+    const startIndex = eventFormat.indexOf('start')
+    const endIndex = eventFormat.indexOf('end')
+    const textIndex = eventFormat.indexOf('text')
+    if (startIndex < 0 || endIndex < 0 || textIndex < 0) continue
+
+    const start = assTimeToVtt(fields[startIndex] ?? '')
+    const end = assTimeToVtt(fields[endIndex] ?? '')
+    const cueText = stripAssText(fields[textIndex] ?? '')
+    if (!start || !end || !cueText) continue
+
+    cues.push(`${start} --> ${end}\n${cueText}`)
+  }
+
+  if (!cues.length) throw new Error('无法解析 .ass/.ssa 字幕内容。')
+
+  return `WEBVTT\n\n${cues.join('\n\n')}`
+}
+
 async function createSubtitleUrl(file: File) {
   const ext = file.name.split('.').pop()?.toLowerCase()
   if (ext === 'vtt') return URL.createObjectURL(file)
@@ -325,7 +472,11 @@ async function createSubtitleUrl(file: File) {
     const vtt = srtToVtt(await file.text())
     return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }))
   }
-  throw new Error('当前只支持 .vtt 和 .srt 字幕')
+  if (ext === 'ass' || ext === 'ssa') {
+    const vtt = assToVtt(await file.text())
+    return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }))
+  }
+  throw new Error('当前只支持 .vtt、.srt、.ass 和 .ssa 字幕。')
 }
 
 async function pickSubtitleFile() {
@@ -353,6 +504,7 @@ async function pickSubtitleFile() {
           accept: {
             'text/vtt': ['.vtt'],
             'application/x-subrip': ['.srt'],
+            'text/x-ssa': ['.ass', '.ssa'],
           },
         },
       ],
@@ -543,8 +695,11 @@ const saveProgressThrottled = () => {
   void saveProgress()
 }
 
-const setEpisode = async (index: number) => {
+const setEpisode = async (index: number, options: { autoplay?: boolean } = { autoplay: true }) => {
   if (!realEpisodes.value[index]) return
+  if (index === activeEpisodeIdx.value) return
+
+  shouldPlayOnReady = options.autoplay ?? true
   await saveProgress()
   await saveNote('笔记已自动保存')
   activeEpisodeIdx.value = index
@@ -552,6 +707,7 @@ const setEpisode = async (index: number) => {
     currentTime.value = 0
     duration.value = 0
     isPlaying.value = false
+    shouldPlayOnReady = false
     return
   }
   currentTime.value = realEpisodes.value[index]?.watch_progress || 0
@@ -602,17 +758,22 @@ const toggleFullscreen = () => {
 }
 
 const loadPlaybackUrl = async () => {
+  clearVideoFrameCheck()
   revokePlaybackUrl(videoUrl.value)
   videoUrl.value = ''
   playbackError.value = ''
   isPlaying.value = false
 
   const file = activeVideoFile.value
-  if (!file) return
+  if (!file) {
+    shouldPlayOnReady = false
+    return
+  }
 
   try {
     videoUrl.value = await createPlaybackUrl(file)
   } catch (error) {
+    shouldPlayOnReady = false
     playbackError.value = error instanceof Error ? error.message : String(error)
   }
 }
@@ -620,6 +781,7 @@ const loadPlaybackUrl = async () => {
 const loadTheatreData = async () => {
   isLoading.value = true
   playbackError.value = ''
+  clearVideoFrameCheck()
   revokePlaybackUrl(videoUrl.value)
   videoUrl.value = ''
 
@@ -693,6 +855,12 @@ const onLoadedMetadata = () => {
   video.volume = volume.value / 100
   video.muted = isMuted.value
   video.playbackRate = playbackRate.value
+  scheduleVideoFrameCheck()
+  void playWhenReadyIfRequested()
+}
+
+const onLoadedData = () => {
+  scheduleVideoFrameCheck(500)
 }
 
 const onTimeUpdate = () => {
@@ -706,14 +874,18 @@ const onTimeUpdate = () => {
 
 const onPlay = () => {
   isPlaying.value = true
+  scheduleVideoFrameCheck()
 }
 
 const onPause = () => {
+  clearVideoFrameCheck()
   isPlaying.value = false
   void saveProgress()
 }
 
 const onVideoError = () => {
+  clearVideoFrameCheck()
+  shouldPlayOnReady = false
   isPlaying.value = false
   playbackError.value =
     'Lite 暂不支持此视频格式或编码。若文件为 MKV/H.265，请使用浏览器支持的 MP4/H.264 或 WebM。'
@@ -735,6 +907,7 @@ onMounted(() => {
 onUnmounted(() => {
   void saveProgress()
   void saveNote('笔记已自动保存')
+  clearVideoFrameCheck()
   revokePlaybackUrl(videoUrl.value)
   clearSubtitle()
   playerResizeObserver?.disconnect()
@@ -789,6 +962,7 @@ watch(playbackRate, (value) => {
             class="video-player"
             playsinline
             @loadedmetadata="onLoadedMetadata"
+            @loadeddata="onLoadedData"
             @timeupdate="onTimeUpdate"
             @play="onPlay"
             @pause="onPause"
@@ -1149,9 +1323,12 @@ watch(playbackRate, (value) => {
 }
 
 .video-player {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: block;
+  object-fit: contain;
   background: #000;
 }
 
@@ -2012,5 +2189,4 @@ watch(playbackRate, (value) => {
     justify-content: flex-start;
   }
 }
-
 </style>
