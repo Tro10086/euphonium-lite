@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { uiState } from '@/ui/stores/uiState'
-import { X, Heart, Star, Play, Edit3, CheckCircle2 } from 'lucide-vue-next'
+import { X, Heart, Star, Play, Edit3 } from 'lucide-vue-next'
 import type { Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 import { animeAPI, episodeAPI, fileAPI } from '@/services/storage'
@@ -22,13 +22,11 @@ const mappingFiles = ref<VideoFile[]>([])
 const mappingOffset = ref(0)
 const mappingStatus = ref('')
 const isMappingLoading = ref(false)
-const progressModalOpen = ref(false)
 const progressEpisodes = ref<Episode[]>([])
-const selectedProgressEpisodeId = ref('')
+const isProgressEditing = ref(false)
+const progressEpisodeNumberInput = ref(0)
 const progressStatus = ref('')
 const isProgressLoading = ref(false)
-const progressMenuOpen = ref(false)
-const progressDropdownRef = ref<HTMLElement | null>(null)
 const selectedMedia = computed(() => uiState.selectedMedia)
 const progressStats = computed(() => {
   const item = selectedMedia.value
@@ -45,6 +43,10 @@ const progressStatsLabel = computed(() => {
   if (watched <= 0) return `未开始 / ${total} 集`
   return `看到第 ${watched} / ${total} 集`
 })
+const progressEpisodeLimit = computed(() => {
+  const item = selectedMedia.value
+  return item?.episodes || item?.episodesList?.length || progressEpisodes.value.length || 0
+})
 
 const checkTruncation = () => {
   nextTick(() => {
@@ -58,21 +60,13 @@ const checkTruncation = () => {
   })
 }
 
-const handleDocumentPointerDown = (event: MouseEvent) => {
-  const target = event.target
-  if (target instanceof Node && progressDropdownRef.value?.contains(target)) return
-  progressMenuOpen.value = false
-}
-
 onMounted(() => {
   checkTruncation()
   window.addEventListener('resize', checkTruncation)
-  document.addEventListener('mousedown', handleDocumentPointerDown)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkTruncation)
-  document.removeEventListener('mousedown', handleDocumentPointerDown)
 })
 
 watch(
@@ -80,8 +74,7 @@ watch(
   () => {
     isExpanded.value = false
     mappingModalOpen.value = false
-    progressModalOpen.value = false
-    progressMenuOpen.value = false
+    isProgressEditing.value = false
     checkTruncation()
   },
 )
@@ -115,24 +108,6 @@ const mappingEpisodeOptions = computed(() =>
   }),
 )
 
-const progressEpisodeOptions = computed(() =>
-  progressEpisodes.value.map((episode) => ({
-    id: episode.id,
-    label: `第 ${episode.ep} 集 ${episode.name_cn || episode.name || ''}`.trim(),
-  })),
-)
-
-const selectedProgressEpisode = computed(
-  () =>
-    progressEpisodes.value.find((episode) => episode.id === selectedProgressEpisodeId.value) ??
-    null,
-)
-const selectedProgressEpisodeLabel = computed(
-  () =>
-    progressEpisodeOptions.value.find((option) => option.id === selectedProgressEpisodeId.value)
-      ?.label ?? '选择剧集',
-)
-
 const mappingRows = computed(() => {
   const episodeByFileId = new Map<string, Episode>()
   for (const episode of mappingEpisodes.value) {
@@ -157,43 +132,24 @@ function episodeByNumber(value: number) {
   )
 }
 
-function episodePercentage(episode: Episode) {
-  if (episode.watched) return 100
-  return Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
-}
-
-function progressFromEpisodes(episodes: Episode[]) {
-  const total =
-    selectedMedia.value?.episodes || selectedMedia.value?.episodesList?.length || episodes.length
+function progressFromEpisodeNumber(
+  episodeNumber: number,
+  totalEpisodes = progressEpisodeLimit.value,
+) {
+  const total = totalEpisodes
   if (total <= 0) return { watchedEpisodes: 0, watchProgress: 0 }
 
-  let furthestIndex = -1
-  episodes.forEach((episode, index) => {
-    const percentage = episodePercentage(episode)
-    if (percentage <= 0) return
-    if (index > furthestIndex) furthestIndex = index
-  })
-
-  if (furthestIndex < 0) return { watchedEpisodes: 0, watchProgress: 0 }
-
-  const reachedEpisodes = furthestIndex + 1
+  const reachedEpisodes = Math.min(total, Math.max(0, Math.round(episodeNumber)))
   return {
-    watchedEpisodes: Math.min(total, reachedEpisodes),
+    watchedEpisodes: reachedEpisodes,
     watchProgress: Math.min(100, Math.round((reachedEpisodes / total) * 100)),
   }
 }
 
-function furthestProgressEpisode(episodes: Episode[]) {
-  let furthest: Episode | null = null
-  let furthestIndex = -1
-  episodes.forEach((episode, index) => {
-    if (episodePercentage(episode) <= 0) return
-    if (index > furthestIndex) {
-      furthest = episode
-      furthestIndex = index
-    }
-  })
-  return furthest ?? episodes[0] ?? null
+function clampProgressEpisodeNumber(value: number) {
+  const max = progressEpisodeLimit.value
+  if (max <= 0) return 0
+  return Math.min(max, Math.max(0, Math.round(Number(value) || 0)))
 }
 
 async function refreshEpisodeMapping() {
@@ -227,48 +183,36 @@ async function openEpisodeMapping() {
 async function openProgressEditor() {
   if (!selectedMedia.value) return
 
-  progressModalOpen.value = true
+  isProgressEditing.value = true
   progressStatus.value = ''
-  progressMenuOpen.value = false
+  progressEpisodeNumberInput.value = progressStats.value.watched
   isProgressLoading.value = true
   try {
     progressEpisodes.value = (await episodeAPI.getByAnimeId(String(selectedMedia.value.id))).sort(
       (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
     )
-    const target = furthestProgressEpisode(progressEpisodes.value)
-    selectedProgressEpisodeId.value = target?.id ?? ''
+    progressEpisodeNumberInput.value = clampProgressEpisodeNumber(progressEpisodeNumberInput.value)
   } finally {
     isProgressLoading.value = false
   }
 }
 
 function closeProgressEditor() {
-  progressModalOpen.value = false
+  isProgressEditing.value = false
   progressStatus.value = ''
-  progressMenuOpen.value = false
-}
-
-function toggleProgressMenu() {
-  if (progressEpisodeOptions.value.length === 0) return
-  progressMenuOpen.value = !progressMenuOpen.value
-}
-
-function selectProgressEpisode(id: string) {
-  selectedProgressEpisodeId.value = id
-  progressMenuOpen.value = false
 }
 
 async function saveManualProgress() {
   const item = selectedMedia.value
-  const episode = selectedProgressEpisode.value
-  if (!item || !episode) return
+  if (!item) return
 
-  const selectedIndex = progressEpisodes.value.findIndex((row) => row.id === episode.id)
-  if (selectedIndex < 0) return
-
+  const targetEpisodeNumber = clampProgressEpisodeNumber(progressEpisodeNumberInput.value)
+  progressEpisodeNumberInput.value = targetEpisodeNumber
+  const targetIndex = targetEpisodeNumber - 1
+  const targetEpisode = targetIndex >= 0 ? progressEpisodes.value[targetIndex] : undefined
   const now = new Date()
   const updatedEpisodes = progressEpisodes.value.map((row, index) => {
-    const isWatched = index <= selectedIndex
+    const isWatched = targetEpisodeNumber > 0 && index < targetIndex
     const duration = Math.max(0, Math.floor(row.duration_seconds ?? 0))
     const position = isWatched ? duration || row.watch_progress || 1 : 0
     return {
@@ -293,15 +237,15 @@ async function saveManualProgress() {
   )
 
   await animeAPI.update(String(item.id), {
-    last_watched_episode: episode.ep,
-    last_watched_position: updatedEpisodes[selectedIndex]?.watch_progress ?? 0,
-    last_watched_at: now,
-    status: 'watching',
+    last_watched_episode: targetEpisodeNumber > 0 ? (targetEpisode?.ep ?? targetEpisodeNumber) : 0,
+    last_watched_position: 0,
+    last_watched_at: targetEpisodeNumber > 0 ? now : undefined,
+    ...(targetEpisodeNumber > 0 ? { status: 'watching' as const } : {}),
   })
 
   progressEpisodes.value = updatedEpisodes
 
-  const progress = progressFromEpisodes(progressEpisodes.value)
+  const progress = progressFromEpisodeNumber(targetEpisodeNumber)
   uiState.selectedMedia = {
     ...item,
     watchedEpisodes: progress.watchedEpisodes,
@@ -309,6 +253,7 @@ async function saveManualProgress() {
   }
   uiState.libraryVersion += 1
   progressStatus.value = '观看进度已更新'
+  isProgressEditing.value = false
 }
 
 function closeEpisodeMapping() {
@@ -446,14 +391,36 @@ async function resetEpisodeMapping() {
         <!-- Progress Tracking -->
         <div class="progress-card">
           <div class="progress-header">
-            <div class="progress-title-row">
-              <span class="progress-label">观看进度</span>
+            <span class="progress-label">观看进度</span>
+            <div class="progress-stats-row">
+              <span class="progress-stats">{{ progressStatsLabel }}</span>
               <button class="progress-edit-btn" title="修改观看进度" @click="openProgressEditor">
                 <Edit3 :size="14" />
               </button>
             </div>
-            <span class="progress-stats">{{ progressStatsLabel }}</span>
           </div>
+          <div v-if="isProgressEditing" class="progress-inline-editor">
+            <span>看到第</span>
+            <input
+              v-model.number="progressEpisodeNumberInput"
+              type="number"
+              min="0"
+              :max="progressEpisodeLimit"
+              step="1"
+              :disabled="isProgressLoading"
+              @keydown.enter.prevent="saveManualProgress"
+            />
+            <span>/ {{ progressEpisodeLimit }} 集</span>
+            <button
+              class="progress-inline-save"
+              :disabled="isProgressLoading"
+              @click="saveManualProgress"
+            >
+              保存
+            </button>
+            <button class="progress-inline-cancel" @click="closeProgressEditor">取消</button>
+          </div>
+          <p v-if="progressStatus" class="progress-card-status">{{ progressStatus }}</p>
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: `${progressStats.percent}%` }"></div>
           </div>
@@ -507,64 +474,6 @@ async function resetEpisodeMapping() {
       <p v-if="mappingStatus" class="mapping-status">{{ mappingStatus }}</p>
       <template #footer>
         <button class="modal-close-btn" @click="closeEpisodeMapping">完成</button>
-      </template>
-    </BaseModal>
-
-    <BaseModal
-      v-model="progressModalOpen"
-      title="修改观看进度"
-      width="460px"
-      :close-on-overlay="false"
-      @close="closeProgressEditor"
-    >
-      <div v-if="isProgressLoading" class="mapping-empty">正在加载剧集...</div>
-      <div v-else class="progress-editor-form">
-        <label class="progress-field">
-          <span>剧集</span>
-          <div
-            ref="progressDropdownRef"
-            class="target-dropdown progress-target-dropdown"
-            :class="{ open: progressMenuOpen }"
-          >
-            <button
-              id="progress-target-trigger"
-              type="button"
-              class="target-trigger"
-              :aria-expanded="progressMenuOpen"
-              aria-haspopup="listbox"
-              :disabled="progressEpisodeOptions.length === 0"
-              @click="toggleProgressMenu"
-            >
-              <span class="target-trigger-text">{{ selectedProgressEpisodeLabel }}</span>
-            </button>
-            <div
-              v-if="progressMenuOpen"
-              class="target-menu"
-              role="listbox"
-              aria-label="选择观看进度剧集"
-            >
-              <button
-                v-for="episode in progressEpisodeOptions"
-                :key="episode.id"
-                type="button"
-                class="target-option"
-                :class="{ active: episode.id === selectedProgressEpisodeId }"
-                @click="selectProgressEpisode(episode.id)"
-              >
-                <span>{{ episode.label }}</span>
-                <CheckCircle2 v-if="episode.id === selectedProgressEpisodeId" :size="16" />
-              </button>
-            </div>
-          </div>
-        </label>
-        <p class="progress-editor-hint">
-          保存后会把所选剧集及之前视为已看完，后面的剧集进度会被清空。
-        </p>
-        <p v-if="progressStatus" class="mapping-status">{{ progressStatus }}</p>
-      </div>
-      <template #footer>
-        <button class="dialog-cancel" @click="closeProgressEditor">取消</button>
-        <button class="modal-close-btn" @click="saveManualProgress">保存</button>
       </template>
     </BaseModal>
   </div>
@@ -689,161 +598,6 @@ async function resetEpisodeMapping() {
   font-weight: 800;
 }
 
-.progress-editor-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.progress-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  color: var(--on-surface);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.target-dropdown {
-  position: relative;
-  width: 100%;
-  max-width: 100%;
-}
-
-.target-trigger {
-  position: relative;
-  width: 100%;
-  min-height: 46px;
-  padding: 11px 40px 11px 14px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 12px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface) 88%, white),
-    var(--surface-low)
-  );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  color: var(--on-surface);
-  font-size: 14px;
-  font-weight: 700;
-  text-align: left;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.target-trigger::after {
-  position: absolute;
-  top: 50%;
-  right: 14px;
-  width: 7px;
-  height: 7px;
-  border-right: 2px solid var(--on-surface-variant);
-  border-bottom: 2px solid var(--on-surface-variant);
-  content: '';
-  pointer-events: none;
-  transform: translateY(-65%) rotate(45deg);
-}
-
-.target-trigger:hover {
-  border-color: var(--primary-container);
-}
-
-.target-trigger:focus-visible {
-  border-color: var(--primary);
-  background-color: var(--surface);
-  box-shadow:
-    0 0 0 3px var(--primary-light),
-    var(--shadow-soft);
-  outline: none;
-}
-
-.target-dropdown.open .target-trigger {
-  border-color: var(--primary);
-  border-bottom-right-radius: 6px;
-  border-bottom-left-radius: 6px;
-  box-shadow:
-    0 0 0 3px var(--primary-light),
-    var(--shadow-soft);
-}
-
-.target-dropdown.open .target-trigger::after {
-  transform: translateY(-35%) rotate(225deg);
-}
-
-.target-trigger:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.target-trigger-text {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.target-menu {
-  position: absolute;
-  top: calc(100% - 1px);
-  left: 0;
-  right: 0;
-  z-index: 20;
-  overflow: hidden auto;
-  max-height: 280px;
-  border: 1px solid var(--primary);
-  border-top: 0;
-  border-radius: 0 0 14px 14px;
-  background: color-mix(in srgb, var(--surface) 92%, white);
-  box-shadow: 0 18px 36px rgba(26, 28, 26, 0.16);
-}
-
-.target-option {
-  width: 100%;
-  padding: 11px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--on-surface);
-  font-size: 14px;
-  font-weight: 700;
-  text-align: left;
-}
-
-.target-option + .target-option {
-  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 75%, transparent);
-}
-
-.target-option:hover,
-.target-option.active {
-  background-color: var(--primary-light);
-  color: var(--primary);
-}
-
-.target-menu::-webkit-scrollbar {
-  width: 8px;
-}
-
-.target-menu::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.target-menu::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background-clip: content-box;
-  background-color: color-mix(in srgb, var(--on-surface-variant) 35%, transparent);
-}
-
-.progress-editor-hint {
-  margin: 0;
-  color: var(--on-surface-variant);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 :deep(.modal-body) {
   max-height: 70vh;
 }
@@ -945,10 +699,12 @@ async function resetEpisodeMapping() {
   font-size: 12px;
 }
 
-.progress-title-row {
+.progress-stats-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
 }
 
 .progress-label {
@@ -978,6 +734,60 @@ async function resetEpisodeMapping() {
 
 .progress-stats {
   color: var(--primary);
+  white-space: nowrap;
+}
+
+.progress-inline-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.progress-inline-editor input {
+  width: 72px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.progress-inline-save,
+.progress-inline-cancel {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.progress-inline-save {
+  background-color: var(--primary);
+  color: white;
+}
+
+.progress-inline-save:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.progress-inline-cancel {
+  background-color: var(--surface);
+  color: var(--on-surface-variant);
+}
+
+.progress-card-status {
+  margin: 8px 0 0;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .progress-bar {

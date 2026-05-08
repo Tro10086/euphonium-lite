@@ -670,6 +670,7 @@ const saveProgress = async () => {
   const total = Math.max(0, Math.floor(duration.value))
   const percentage = total > 0 ? Math.min(100, Math.round((position / total) * 100)) : 0
   const now = new Date()
+  const hasPlaybackPosition = position > 0 || percentage > 0
 
   await Promise.all([
     episodeAPI.update(activeEpisode.value.id, {
@@ -679,12 +680,14 @@ const saveProgress = async () => {
       watched: percentage >= 90,
       watched_at: percentage >= 90 ? now : activeEpisode.value.watched_at,
     }),
-    animeAPI.update(realAnime.value.id, {
-      last_watched_episode: activeEpisode.value.ep,
-      last_watched_position: position,
-      last_watched_at: now,
-      status: 'watching',
-    }),
+    hasPlaybackPosition
+      ? animeAPI.update(realAnime.value.id, {
+          last_watched_episode: activeEpisode.value.ep,
+          last_watched_position: position,
+          last_watched_at: now,
+          status: 'watching',
+        })
+      : Promise.resolve(),
   ])
 
   const idx = activeEpisodeIdx.value
@@ -700,13 +703,15 @@ const saveProgress = async () => {
       updated_at: now,
     }
   }
-  realAnime.value = {
-    ...realAnime.value,
-    last_watched_episode: activeEpisode.value.ep,
-    last_watched_position: position,
-    last_watched_at: now,
-    status: 'watching',
-    updated_at: now,
+  if (hasPlaybackPosition) {
+    realAnime.value = {
+      ...realAnime.value,
+      last_watched_episode: activeEpisode.value.ep,
+      last_watched_position: position,
+      last_watched_at: now,
+      status: 'watching',
+      updated_at: now,
+    }
   }
 }
 

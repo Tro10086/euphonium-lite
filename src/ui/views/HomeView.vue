@@ -92,18 +92,20 @@ const progressForAnime = (anime: Anime) => {
 
   let furthestIndex = -1
   episodes.forEach((episode, index) => {
-    const percentage = episode.watched
-      ? 100
-      : Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
-    if (percentage <= 0) return
+    const hasProgress =
+      episode.watched ||
+      Math.min(100, Math.max(0, episode.watch_percentage ?? 0)) > 0 ||
+      Math.max(0, episode.watch_progress ?? 0) > 0
+    if (!hasProgress) return
     if (index > furthestIndex) furthestIndex = index
   })
 
-  if (furthestIndex >= 0) {
-    const reachedEpisodes = furthestIndex + 1
+  const storedEpisode = Math.min(total, Math.max(0, Math.round(anime.last_watched_episode ?? 0)))
+  const reachedEpisodes = Math.max(furthestIndex + 1, storedEpisode)
 
+  if (reachedEpisodes > 0) {
     return {
-      watchedEpisodes: Math.min(total, reachedEpisodes),
+      watchedEpisodes: reachedEpisodes,
       watchProgress: Math.min(100, Math.round((reachedEpisodes / total) * 100)),
     }
   }
