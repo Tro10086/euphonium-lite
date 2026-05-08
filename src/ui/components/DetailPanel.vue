@@ -25,7 +25,6 @@ const isMappingLoading = ref(false)
 const progressModalOpen = ref(false)
 const progressEpisodes = ref<Episode[]>([])
 const selectedProgressEpisodeId = ref('')
-const progressPercentInput = ref(0)
 const progressStatus = ref('')
 const isProgressLoading = ref(false)
 const selectedMedia = computed(() => uiState.selectedMedia)
@@ -220,7 +219,6 @@ async function openProgressEditor() {
     )
     const target = furthestProgressEpisode(progressEpisodes.value)
     selectedProgressEpisodeId.value = target?.id ?? ''
-    progressPercentInput.value = target ? episodePercentage(target) : 0
   } finally {
     isProgressLoading.value = false
   }
@@ -231,54 +229,48 @@ function closeProgressEditor() {
   progressStatus.value = ''
 }
 
-function syncSelectedProgressPercent() {
-  const episode = selectedProgressEpisode.value
-  progressPercentInput.value = episode ? episodePercentage(episode) : 0
-}
-
 async function saveManualProgress() {
   const item = selectedMedia.value
   const episode = selectedProgressEpisode.value
   if (!item || !episode) return
 
-  const percentage = Math.min(100, Math.max(0, Math.round(Number(progressPercentInput.value) || 0)))
-  const total = Math.max(0, Math.floor(episode.duration_seconds ?? 0))
-  const position =
-    total > 0
-      ? Math.floor((total * percentage) / 100)
-      : percentage > 0
-        ? episode.watch_progress || 1
-        : 0
-  const now = new Date()
+  const selectedIndex = progressEpisodes.value.findIndex((row) => row.id === episode.id)
+  if (selectedIndex < 0) return
 
-  await episodeAPI.update(episode.id, {
-    watch_progress: position,
-    watch_percentage: percentage,
-    watched: percentage >= 90,
-    watched_at: percentage >= 90 ? now : percentage <= 0 ? null : episode.watched_at,
+  const now = new Date()
+  const updatedEpisodes = progressEpisodes.value.map((row, index) => {
+    const isWatched = index <= selectedIndex
+    const duration = Math.max(0, Math.floor(row.duration_seconds ?? 0))
+    const position = isWatched ? duration || row.watch_progress || 1 : 0
+    return {
+      ...row,
+      watch_progress: position,
+      watch_percentage: isWatched ? 100 : 0,
+      watched: isWatched,
+      watched_at: isWatched ? (row.watched_at ?? now) : null,
+      updated_at: now,
+    }
   })
 
-  if (percentage > 0) {
-    await animeAPI.update(String(item.id), {
-      last_watched_episode: episode.ep,
-      last_watched_position: position,
-      last_watched_at: now,
-      status: 'watching',
-    })
-  }
-
-  progressEpisodes.value = progressEpisodes.value.map((row) =>
-    row.id === episode.id
-      ? {
-          ...row,
-          watch_progress: position,
-          watch_percentage: percentage,
-          watched: percentage >= 90,
-          watched_at: percentage >= 90 ? now : percentage <= 0 ? null : row.watched_at,
-          updated_at: now,
-        }
-      : row,
+  await Promise.all(
+    updatedEpisodes.map((row) =>
+      episodeAPI.update(row.id, {
+        watch_progress: row.watch_progress,
+        watch_percentage: row.watch_percentage,
+        watched: row.watched,
+        watched_at: row.watched_at,
+      }),
+    ),
   )
+
+  await animeAPI.update(String(item.id), {
+    last_watched_episode: episode.ep,
+    last_watched_position: updatedEpisodes[selectedIndex]?.watch_progress ?? 0,
+    last_watched_at: now,
+    status: 'watching',
+  })
+
+  progressEpisodes.value = updatedEpisodes
 
   const progress = progressFromEpisodes(progressEpisodes.value)
   uiState.selectedMedia = {
@@ -502,18 +494,14 @@ async function resetEpisodeMapping() {
       <div v-else class="progress-editor-form">
         <label class="progress-field">
           <span>剧集</span>
-          <select v-model="selectedProgressEpisodeId" @change="syncSelectedProgressPercent">
+          <select v-model="selectedProgressEpisodeId">
             <option v-for="episode in progressEpisodeOptions" :key="episode.id" :value="episode.id">
               {{ episode.label }}
             </option>
           </select>
         </label>
-        <label class="progress-field">
-          <span>进度百分比</span>
-          <input v-model.number="progressPercentInput" type="number" min="0" max="100" step="1" />
-        </label>
         <p class="progress-editor-hint">
-          首页会按最远有进度的剧集计算总进度；把误触剧集设为 0 可清除它的影响。
+          保存后会把所选剧集及之前视为已看完，后面的剧集进度会被清空。
         </p>
         <p v-if="progressStatus" class="mapping-status">{{ progressStatus }}</p>
       </div>
@@ -795,8 +783,14 @@ async function resetEpisodeMapping() {
   align-items: center;
   justify-content: center;
   border-radius: 7px;
+  border: 0;
   color: var(--primary);
-  background-color: var(--surface);
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.progress-edit-btn:hover {
+  background-color: var(--primary-light);
 }
 
 .progress-stats {

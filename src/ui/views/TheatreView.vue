@@ -124,7 +124,7 @@ const playerFrameStyle = computed(() => ({
   width: playerFrameWidth.value,
 }))
 let playerResizeObserver: ResizeObserver | null = null
-const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2]
+const playbackRates = [2, 1.5, 1.25, 1, 0.75, 0.5]
 const playbackRate = ref(1)
 const noRenderableVideoMessage =
   '当前浏览器只解码出了声音，没有可显示的视频画面。通常是视频编码或封装不受原生播放器支持，请换用 H.264/AAC MP4 或 WebM，或先转码后播放。'
@@ -253,14 +253,6 @@ function renderNoteMarkdown(
   }
 
   return html.join('\n')
-}
-
-function ensureAttachmentMarkers(text: string, attachmentIds: string[]) {
-  const missingIds = attachmentIds.filter((id) => !text.includes(`](attachment:${id})`))
-  if (missingIds.length === 0) return text
-
-  const markers = missingIds.map((id) => `![截图](attachment:${id})`).join('\n')
-  return text.trim() ? `${text.trimEnd()}\n${markers}` : markers
 }
 
 const updatePlayerFrame = () => {
@@ -753,7 +745,7 @@ function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
   }
 }
 
-async function loadNote() {
+function loadNote() {
   isHydratingNote = true
   clearNoteAutosaveTimer()
   noteMessage.value = ''
@@ -761,23 +753,7 @@ async function loadNote() {
   noteText.value = ''
   noteAttachmentIds.value = []
   clearNoteAttachmentPreviews()
-
-  try {
-    const targetId = noteTargetId.value
-    if (!targetId) return
-
-    const [latestNote] = (await notesAPI.getByTarget(noteTargetType.value, targetId))
-      .slice()
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-    if (!latestNote) return
-
-    noteId.value = latestNote.id
-    noteAttachmentIds.value = [...latestNote.attachmentIds]
-    noteText.value = ensureAttachmentMarkers(latestNote.plainText, noteAttachmentIds.value)
-    await loadNoteAttachmentPreviews(noteAttachmentIds.value)
-  } finally {
-    isHydratingNote = false
-  }
+  isHydratingNote = false
 }
 
 async function saveNote(message = '笔记已保存', force = false) {
