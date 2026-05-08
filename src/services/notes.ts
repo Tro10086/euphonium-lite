@@ -76,30 +76,6 @@ export function sanitizeImageAttrs(json: TipTapJSON): TipTapJSON {
   })
 }
 
-export function injectImageAttrs(
-  json: TipTapJSON,
-  resolver: (attachmentId: string) => Partial<Record<string, unknown>> | undefined,
-): TipTapJSON {
-  return walkTipTapJson(cloneTipTapJson(json), (node) => {
-    if (node.type !== 'image') return node
-
-    const attachmentId = node.attrs?.attachmentId
-    if (typeof attachmentId !== 'string') return node
-
-    const injectedAttrs = resolver(attachmentId)
-    if (!injectedAttrs) return node
-
-    return {
-      ...node,
-      attrs: {
-        ...node.attrs,
-        ...injectedAttrs,
-        attachmentId,
-      },
-    }
-  })
-}
-
 export const notesAPI = {
   async save(draft: NoteDraft): Promise<string> {
     const now = new Date()
@@ -202,18 +178,6 @@ export const attachmentAPI = {
     return id
   },
 
-  async get(id: string) {
-    return notesDb.attachments.get(id)
-  },
-
-  async getBlob(id: string) {
-    return (await notesDb.attachments.get(id))?.blob
-  },
-
-  async getByNoteId(noteId: string) {
-    return notesDb.attachments.where('noteId').equals(noteId).toArray()
-  },
-
   async getAllMetadata() {
     const attachments = await notesDb.attachments.toArray()
     return attachments.map((attachment) => ({
@@ -227,19 +191,4 @@ export const attachmentAPI = {
     }))
   },
 
-  async delete(id: string) {
-    const attachment = await notesDb.attachments.get(id)
-    await notesDb.transaction('rw', [notesDb.attachments, notesDb.notes], async () => {
-      await notesDb.attachments.delete(id)
-      if (attachment) {
-        const note = await notesDb.notes.get(attachment.noteId)
-        if (note) {
-          await notesDb.notes.update(note.id, {
-            attachmentIds: note.attachmentIds.filter((attachmentId) => attachmentId !== id),
-            updated_at: new Date(),
-          })
-        }
-      }
-    })
-  },
 }

@@ -8,27 +8,18 @@ importers:
 
   .:
     dependencies:
-      '@element-plus/icons-vue':
-        specifier: ^2.3.2
-        version: 2.3.2(vue@3.5.33(typescript@5.9.3))
       dexie:
         specifier: ^4.3.0
         version: 4.4.2
-      element-plus:
-        specifier: ^2.13.6
-        version: 2.13.7(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3))
       lucide-vue-next:
         specifier: ^0.479.0
         version: 0.479.0(vue@3.5.33(typescript@5.9.3))
-      pinia:
-        specifier: ^3.0.4
-        version: 3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3))
       vue:
         specifier: ^3.5.30
         version: 3.5.33(typescript@5.9.3)
       vue-router:
         specifier: ^5.0.3
-        version: 5.0.6(@vue/compiler-sfc@3.5.33)(pinia@3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3)))(vue@3.5.33(typescript@5.9.3))
+        version: 5.0.6(@vue/compiler-sfc@3.5.33)(vue@3.5.33(typescript@5.9.3))
     devDependencies:
       '@tsconfig/node24':
         specifier: ^24.0.4
@@ -75,12 +66,6 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
-      unplugin-auto-import:
-        specifier: ^21.0.0
-        version: 21.0.0(@vueuse/core@12.0.0(typescript@5.9.3))
-      unplugin-vue-components:
-        specifier: ^31.0.0
-        version: 31.1.0(vue@3.5.33(typescript@5.9.3))
       vite:
         specifier: ^7.3.1
         version: 7.3.2(@types/node@24.12.2)(jiti@2.6.1)(yaml@2.8.3)
@@ -3537,7 +3522,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  vue-router@5.0.6(@vue/compiler-sfc@3.5.33)(pinia@3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3)))(vue@3.5.33(typescript@5.9.3)):
+  vue-router@5.0.6(@vue/compiler-sfc@3.5.33)(vue@3.5.33(typescript@5.9.3)):
     dependencies:
       '@babel/generator': 7.29.1
       '@vue-macros/common': 3.1.2(vue@3.5.33(typescript@5.9.3))
@@ -3559,7 +3544,6 @@ snapshots:
       yaml: 2.8.3
     optionalDependencies:
       '@vue/compiler-sfc': 3.5.33
-      pinia: 3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3))
 
   vue-tsc@3.2.7(typescript@5.9.3):
     dependencies:

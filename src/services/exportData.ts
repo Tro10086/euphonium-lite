@@ -317,9 +317,3 @@ export async function importExportData(
   await notesAPI.bulkPut(notes)
   return result
 }
-
-export function createExportZipWithAttachments(): Promise<Blob> {
-  return Promise.reject(
-    new Error('Attachment ZIP export is reserved for a future zip dependency integration.'),
-  )
-}

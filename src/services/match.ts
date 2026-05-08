@@ -144,32 +144,6 @@ export async function manualSearchMatch(matchKey: string, keyword: string): Prom
   return topResults
 }
 
-export async function selectMatch(matchKey: string, bangumi_id: number) {
-  const existing = await matchAPI.getByFolderKey(matchKey)
-  if (!existing || existing?.status !== 'idle') return
-  await matchAPI.update(matchKey, {
-    status: 'selected',
-    selected_anime_id: bangumi_id,
-  })
-}
-
 export async function claimMatchForImport(matchKey: string, bangumi_id: number) {
   return matchAPI.claimForImport(matchKey, bangumi_id)
-}
-
-export async function mappingMatch(matchKey: string, draft_mappings: Record<number, string[]>) {
-  const existing = await matchAPI.getByFolderKey(matchKey)
-  if (!existing || !existing.selected_anime_id) return
-  await matchAPI.update(matchKey, {
-    status: 'mapping',
-    draft_mappings: draft_mappings,
-  })
-}
-
-export async function completeMatch(matchKey: string) {
-  const existing = await matchAPI.getByFolderKey(matchKey)
-  if (!existing) return
-  await matchAPI.update(matchKey, {
-    status: 'completed',
-  })
 }

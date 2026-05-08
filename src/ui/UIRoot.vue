@@ -35,7 +35,6 @@ const handleSystemThemeChange = () => {
 
 onMounted(async () => {
   updateTheme();
-  document.documentElement.classList.remove('compact-mode');
   mediaQuery.addEventListener('change', handleSystemThemeChange);
   rebuildNavItems(await collectionAPI.getAll());
 });

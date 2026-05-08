@@ -10,10 +10,9 @@ const searchCache = new Map<string, BangumiAnime[]>()
 
 export async function getSearchResults(keyword: string): Promise<BangumiAnime[]> {
   if (searchCache.has(keyword)) {
-    console.log(`[Cache hit] ${keyword}`)
     return searchCache.get(keyword)!
   }
-  console.log(`[Cache miss] ${keyword} → fetching`)
+
   const results = await searchSubjects(keyword)
   searchCache.set(keyword, results)
   return results

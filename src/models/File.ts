@@ -21,7 +21,3 @@ export interface ParsedFileInfo {
   season: number // 季数，默认1
   episode: number // 集数，默认0（表示无法解析）
 }
-
-export function formatParsedFileInfo(info: ParsedFileInfo): string {
-  return `标题: ${info.title}, 季: ${info.season}, 集: ${info.episode}`
-}

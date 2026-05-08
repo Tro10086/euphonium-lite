@@ -33,7 +33,6 @@ interface UISettings {
   compactMode: boolean
   defaultRegex: string
   customRegex: string
-  cacheSize: string
 }
 
 interface UIState {
@@ -66,7 +65,6 @@ const defaultSettings: UISettings = {
   compactMode: false,
   defaultRegex: '^\\[(?<author>.*?)\\] (?<title>.*?) \\((?<year>\\d{4})\\)$',
   customRegex: '',
-  cacheSize: 'IndexedDB',
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,7 +88,6 @@ function loadPersistedSettings(): Partial<UISettings> {
     if (typeof parsed.compactMode === 'boolean') settings.compactMode = parsed.compactMode
     if (typeof parsed.defaultRegex === 'string') settings.defaultRegex = parsed.defaultRegex
     if (typeof parsed.customRegex === 'string') settings.customRegex = parsed.customRegex
-    if (typeof parsed.cacheSize === 'string') settings.cacheSize = parsed.cacheSize
     return settings
   } catch {
     return {}
@@ -108,7 +105,6 @@ function persistSettings(settings: UISettings) {
         compactMode: settings.compactMode,
         defaultRegex: settings.defaultRegex,
         customRegex: settings.customRegex,
-        cacheSize: settings.cacheSize,
       }),
     )
   } catch {

@@ -1,7 +1,6 @@
 import { db } from '@/db/db'
 import type { Anime, Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
-import type { WatchHistory } from '@/models/History'
 import type { MatchRecord } from '@/models/Match'
 import type { LibraryRoot } from '@/models/Library'
 import type { UserCollection } from '@/models/Collection'
@@ -40,10 +39,6 @@ export const collectionAPI = {
     return db.collections.orderBy('order').toArray()
   },
 
-  async getById(id: string) {
-    return db.collections.get(id)
-  },
-
   async replaceAll(collections: UserCollection[]) {
     const existing = await db.collections.toArray()
     const existingIds = new Set(existing.map((collection) => collection.id))
@@ -63,21 +58,6 @@ export const collectionAPI = {
     })
 
     return this.getAll()
-  },
-
-  async add(label: string) {
-    const now = new Date()
-    const existingCount = await db.collections.count()
-    const collection: UserCollection = {
-      id: `collection-${crypto.randomUUID()}`,
-      label: label.trim(),
-      animeIds: [],
-      order: existingCount,
-      created_at: now,
-      updated_at: now,
-    }
-    await db.collections.add(collection)
-    return collection
   },
 
   async update(id: string, changes: Partial<Pick<UserCollection, 'label' | 'animeIds' | 'order'>>) {
@@ -108,9 +88,6 @@ export const collectionAPI = {
     })
   },
 
-  async delete(id: string) {
-    return db.collections.delete(id)
-  },
 }
 
 export const animeAPI = {
@@ -203,25 +180,9 @@ export const animeAPI = {
     return expired.length
   },
 
-  async delete(id: string) {
-    return this.moveToTrash(id)
-  },
 }
 
 export const episodeAPI = {
-  async add(episode: Omit<Episode, 'id' | 'rating' | 'watched' | 'created_at' | 'updated_at'>) {
-    const now = new Date()
-    const newEpisode: Episode = {
-      ...episode,
-      id: crypto.randomUUID(),
-      watched: false,
-      rating: 0,
-      created_at: now,
-      updated_at: now,
-    }
-    return db.episodes.add(newEpisode)
-  },
-
   async bulkAdd(
     eps: Omit<Episode, 'id' | 'rating' | 'watched' | 'created_at' | 'updated_at'>[],
   ): Promise<Episode[]> {
@@ -245,38 +206,17 @@ export const episodeAPI = {
     return db.episodes.toArray()
   },
 
-  async getById(id: string) {
-    return db.episodes.get(id)
-  },
-
   async update(id: string, changes: Omit<Partial<Episode>, 'id' | 'updated_at'>) {
     return db.episodes.update(id, { ...changes, updated_at: new Date() })
-  },
-
-  async delete(id: string) {
-    return db.episodes.delete(id)
   },
 
   async getByAnimeId(animeId: string) {
     return db.episodes.where('anime_id').equals(animeId).toArray()
   },
-  // 其他方法后续补充
-}
-
-// 观看历史相关操作（后续补充）
-export const watchHistoryAPI = {
-  async add(history: Omit<WatchHistory, 'id'>) {
-    const newHistory: WatchHistory = { ...history, id: crypto.randomUUID() }
-    return db.watchHistory.add(newHistory)
-  },
 }
 
 // 文件增删改查
 export const fileAPI = {
-  async getById(id: string) {
-    return db.files.get(id)
-  },
-
   async getByIds(ids: string[]) {
     return db.files.where('id').anyOf(ids).toArray()
   },
@@ -303,56 +243,6 @@ export const fileAPI = {
     }
   },
 
-  // // 删除文件时不采用级联删除，而是将episode表中的file_id设置为空
-  // async delete(files: VideoFile[]): Promise<void> {
-  //   if (files.length === 0) return
-  //   const ids = files.map((f) => f.id)
-  //   const idSet = new Set(ids)
-  //   await db.transaction('rw', [db.files, db.episodes], async () => {
-  //     // 遍历所有 episodes，从 file_ids 中移除指定的 id
-  //     await db.episodes.toCollection().modify((ep) => {
-  //       if (ep.file_ids && ep.file_ids.length > 0) {
-  //         const filtered = ep.file_ids.filter((id) => !idSet.has(id))
-
-  //         // 只在确实有变化时才更新（避免不必要的写入）
-  //         if (filtered.length !== ep.file_ids.length) {
-  //           ep.file_ids = filtered.length > 0 ? filtered : []
-  //         }
-  //       }
-  //     })
-  //     await db.files.bulkDelete(ids)
-  //   })
-  // },
-
-  // 删除文件（利用 ep_id 快速定位）
-  async delete(files: VideoFile[]) {
-    if (files.length === 0) return
-
-    // 按 ep_id 分组，避免重复更新同一 EP
-    const epGroups = new Map<string, Set<string>>()
-
-    for (const file of files) {
-      if (file.ep_id) {
-        const set = epGroups.get(file.ep_id) ?? new Set()
-        set.add(file.id)
-        epGroups.set(file.ep_id, set)
-      }
-    }
-
-    await db.transaction('rw', [db.files, db.episodes], async () => {
-      // 逐个 EP 更新（精确打击，无需扫描）
-      for (const [epId, fileIdSet] of epGroups) {
-        await db.episodes.where({ id: epId }).modify((ep) => {
-          if (ep.file_ids) {
-            ep.file_ids = ep.file_ids.filter((id) => !fileIdSet.has(id))
-            if (ep.file_ids.length === 0) delete ep.file_ids
-          }
-        })
-      }
-
-      await db.files.bulkDelete(files.map((f) => f.id))
-    })
-  },
 }
 
 // 匹配记录增删改查
@@ -366,19 +256,8 @@ export const matchAPI = {
     return db.match.delete(existing?.keyword ?? key)
   },
 
-  async getByKeyword(keyword: string) {
-    return (
-      (await db.match.where('search_keyword').equals(keyword).first()) ??
-      (await db.match.where('keyword').equals(keyword).first())
-    )
-  },
-
   async getByFolderKey(folderKey: string) {
     return db.match.where('folder_key').equals(folderKey).first()
-  },
-
-  async getByKey(key: string) {
-    return db.match.get(key)
   },
 
   async add(

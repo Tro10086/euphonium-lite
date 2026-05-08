@@ -1,20 +1,25 @@
 # Euphonium Lite
 
-Euphonium Lite 是一个纯前端的本地动画媒体库工具。它通过浏览器目录授权扫描本地视频文件，解析文件名中的标题、季度和集数，结合 Bangumi 候选结果生成可确认的媒体库，并把馆藏、剧集、匹配记录和笔记保存在浏览器本地。
+![Vue](https://img.shields.io/badge/Vue-3-42b883)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6)
+![Vite](https://img.shields.io/badge/Vite-7-646cff)
+![IndexedDB](https://img.shields.io/badge/storage-IndexedDB-6b7280)
 
-当前分支是 demo 版本，重点验证 Lite 版的核心闭环：扫描本地目录、自动匹配、人工修正、馆藏浏览、播放入口、笔记、回收站和 JSON 备份。
+Euphonium Lite 是一个纯前端、本地优先的动画媒体库工具。它通过浏览器目录授权扫描本地视频文件，解析文件名中的标题、季度和集数，结合 Bangumi 候选结果生成可确认的媒体库，并把馆藏、剧集、匹配记录、播放进度和笔记保存在浏览器本地。
 
-## 功能
+Lite 版本专注验证单机使用闭环：授权目录、扫描本地文件、自动匹配、人工校正、馆藏浏览、放映厅播放、笔记、合集、回收站和 JSON 备份。
 
-- 本地目录扫描：使用 File System Access API 读取用户授权目录，不上传本地文件。
-- 文件名解析：支持常见字幕组命名、`S01E01`、中文集数、普通集数、技术标签清理和标题候选生成。
-- Bangumi 匹配：按目录聚合文件，搜索 Bangumi 候选，保留最多 4 个可选动画。
-- 剧集映射：按文件选择目标集数，支持批量偏移和重新解析。
-- 真实馆藏：导入确认后写入 IndexedDB，不再依赖 mock 数据。
-- 首页管理：支持全部、最近、收藏、回收站分组，以及软删除和批量恢复。
-- 播放与笔记：进入剧集页查看关联文件、播放浏览器支持的视频，并保存剧集笔记。
-- 数据管理：支持 JSON 导出和导入，设置页提供 IndexedDB 清空入口。
-- UI 设置：主题、精简模式和自定义解析设置保存在浏览器 `localStorage`。
+## 功能特性
+
+- 本地目录扫描：基于 File System Access API 读取用户授权目录，媒体文件不会上传到服务器。
+- 文件名解析：支持字幕组命名、`S01E01`、`EP01`、中文集数、普通数字集数、集数范围、技术标签清理和标题候选生成。
+- Bangumi 匹配：按目录聚合视频文件，调用 Bangumi v0 API 搜索动画候选，保留最多 4 个候选供确认。
+- 剧集映射：支持单文件改集数、批量偏移、重置解析和未解析文件提示。
+- 馆藏管理：首页提供封面墙、搜索、年份/标签筛选、排序、最近、收藏、回收站和自定义合集。
+- 放映厅：读取本地授权文件播放，支持文件源选择、播放进度保存、倍速、音量、全屏和 `.srt` / `.vtt` 字幕。
+- 笔记系统：支持动画/剧集笔记、Markdown 风格编辑预览、时间戳、截图附件、软删除和恢复。
+- 数据备份：支持 JSON 导出/导入馆藏、剧集、文件、匹配记录和笔记元数据。
+- UI 设置：主题、精简模式、解析测试和导航顺序保存在浏览器本地。
 
 ## 技术栈
 
@@ -23,7 +28,6 @@ Euphonium Lite 是一个纯前端的本地动画媒体库工具。它通过浏�
 - TypeScript
 - Vite
 - Dexie / IndexedDB
-- Element Plus
 - lucide-vue-next
 - pnpm
 
@@ -31,9 +35,9 @@ Euphonium Lite 是一个纯前端的本地动画媒体库工具。它通过浏�
 
 - Node.js `^20.19.0 || >=22.12.0`
 - pnpm `10.x`
-- 推荐 Chromium 内核浏览器。目录扫描依赖 File System Access API，Firefox/Safari 支持有限。
+- Chromium 内核浏览器。目录扫描依赖 File System Access API，Firefox/Safari 支持有限。
 
-## 本地开发
+## 快速开始
 
 ```sh
 pnpm install
@@ -49,37 +53,51 @@ pnpm run build
 pnpm run lint
 ```
 
+## 使用流程
+
+1. 在「导入媒体」页选择本地动画目录。
+2. 点击「开始扫描」，应用会递归扫描视频文件并计算采样哈希。
+3. 在扫描结果中确认 Bangumi 候选，并按需修正剧集映射。
+4. 写入馆藏后，在首页浏览、筛选、收藏或加入自定义合集。
+5. 进入放映厅播放本地文件、记录进度、加载字幕并编写笔记。
+6. 在设置页导出 JSON 备份，或在新浏览器环境中导入已有备份。
+
 ## 数据存储
 
-应用没有后端服务，主要数据都保存在浏览器本机：
+应用没有后端服务，主要数据保存在浏览器本机：
 
-- `IndexedDB / EuphoniumLite`：动画、剧集、文件、扫描目录、匹配记录。
-- `IndexedDB / EuphoniumLiteNotes`：笔记和附件元数据。
-- `localStorage / euphonium-ui-settings`：主题、精简模式、自定义正则等 UI 设置。
+- `IndexedDB / EuphoniumLite`：媒体目录、动画、剧集、文件、匹配记录、自定义合集。
+- `IndexedDB / EuphoniumLiteNotes`：笔记和附件数据。
+- `localStorage / euphonium-ui-settings`：主题、精简模式、解析规则输入等设置。
+- `localStorage / euphonium-nav-order`：内置导航和自定义合集顺序。
+- `localStorage / euphonium-library-filter-options`：首页年份和标签筛选缓存。
 
-JSON 备份覆盖馆藏、剧集、文件、匹配和笔记数据。浏览器目录授权句柄不能通过 JSON 恢复，这是浏览器安全模型限制；重新授权目录后可以继续扫描。
+JSON 备份不包含浏览器目录授权句柄，也不包含附件 Blob。恢复备份后需要重新授权媒体目录，附件目前只导出元数据。
 
 ## 项目结构
 
 ```text
-docs/                  需求和技术方案文档
+docs/                  需求、架构和历史方案文档
 public/                静态资源
-src/db/                Dexie 数据库定义
+src/db/                Dexie 数据库定义与迁移
 src/models/            领域模型类型
-src/services/          Bangumi、扫描、匹配、存储、导入导出等服务
-src/ui/                业务界面、组件和 UI 状态
+src/router/            Vue Router 路由
+src/services/          扫描、匹配、写库、播放、笔记、导入导出等服务
+src/ui/                业务界面、组件、样式和 UI 状态
 src/utils/             文件名解析等工具
 ```
 
 ## 文档
 
+- [详细需求与架构文档](docs/README-TECHNICAL.md)
 - [V3 技术方案](docs/euphonium-V3.md)
 - [V2 需求与技术文档](docs/euphonium-V2.md)
 - [原始方案整理](docs/euphonium.md)
 
 ## 当前限制
 
-- 浏览器可播放格式受 `<video>` 支持限制，部分 MKV/编码无法直接播放。
-- JSON 导出暂不包含附件 Blob，只保留附件元数据。
+- 浏览器播放能力受 `<video>` 支持限制，部分 MKV、H.265 或特殊音轨无法直接播放。
+- Lite 版不包含服务端转码、HLS、远程访问、多设备同步或超分任务。
 - Bangumi API 访问受网络环境和接口可用性影响。
-- 本项目是 Lite 版前端验证，完整版的服务端转码、远程访问和超分任务不在当前实现范围。
+- JSON 导出暂不包含附件 Blob，也不能恢复浏览器目录授权。
+- 设置页的自定义正则目前用于持久化与解析测试，尚未接入导入扫描链路。

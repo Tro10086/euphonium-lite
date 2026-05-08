@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { uiState } from '@/ui/stores/uiState';
-import { Palette, Code, Database, Lightbulb, Moon, Settings2, Check, Download, Upload, RotateCw, Play, Edit2, Trash2 } from 'lucide-vue-next';
+import { Palette, Code, Database, Lightbulb, Moon, Settings2, Check, Download, Upload, Play, Edit2, Trash2 } from 'lucide-vue-next';
 import BaseButton from '@/ui/components/BaseButton.vue';
 import { debugAPI } from '@/services/storage';
 import { downloadBackupJson, formatImportResult, importBackupJsonFile, reloadAfterImport } from '@/ui/utils/backupTransfer';
@@ -314,18 +314,6 @@ const runTest = () => {
             <p v-if="dataMessage" class="data-message">{{ dataMessage }}</p>
             <p v-if="dataError" class="data-error">{{ dataError }}</p>
 
-            <div class="divider"></div>
-
-            <div class="action-row">
-              <div class="row-info">
-                <h3 class="text-error">清除缓存</h3>
-                <p>释放由缩略图和临时预览文件占用的本地存储空间 (约 {{ uiState.settings.cacheSize }})。</p>
-              </div>
-              <button class="btn-error-ghost sm">
-                <RotateCw :size="16" />
-                <span>立即清理</span>
-              </button>
-            </div>
           </div>
         </section>
 

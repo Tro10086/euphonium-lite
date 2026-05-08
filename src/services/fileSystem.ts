@@ -3,24 +3,6 @@ import type { VideoFile } from '@/models/File';
 import type { LibraryRoot } from '@/models/Library';
 import { fileAPI, libraryRootAPI } from './storage';
 
-// 授权目录
-export async function requestDirectory() {
-  if (!window.showDirectoryPicker) {
-    throw new Error('当前浏览器不支持 File System Access API，请使用 Chrome/Edge 等浏览器');
-  }
-  try {
-    const dirHandle = await window.showDirectoryPicker();
-    // 将目录句柄存储到 IndexedDB
-    await db.table('dirHandle').put({ id: 'main', handle: dirHandle });
-    return dirHandle;
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('用户取消了目录选择');
-    }
-    throw new Error('获取目录权限失败: ' + (error instanceof Error ? error.message : String(error)));
-  }
-}
-
 export async function requestLibraryRoot(): Promise<LibraryRoot> {
   if (!window.showDirectoryPicker) {
     throw new Error('当前浏览器不支持 File System Access API，请使用 Chrome/Edge 等浏览器');
@@ -70,18 +52,6 @@ export async function requestLibraryRoot(): Promise<LibraryRoot> {
   await libraryRootAPI.add(root);
   await db.dirHandle.put({ id: root.id, handle });
   return root;
-}
-
-// 恢复已授权的目录句柄
-export async function getDirectoryHandle() {
-  const record = await db.table('dirHandle').get('main');
-  if (record && record.handle) {
-    // 验证权限是否仍然有效
-    if (await record.handle.queryPermission({ mode: 'read' }) === 'granted') {
-      return record.handle;
-    }
-  }
-  return null;
 }
 
 export async function getLibraryRoots() {
@@ -170,25 +140,6 @@ async function scanDirectory(dirHandle: FileSystemDirectoryHandle, relativePath 
     }
   }
   return files;
-}
-
-export async function scanVideos(dirHandle: FileSystemDirectoryHandle) {
-  // const files = await scanDirectory(dirHandle);
-  // // 存储到 IndexedDB，先清空旧数据（简单处理）
-  // await db.table('files').clear();
-  // await db.table('files').bulkAdd(files);
-  // return files;
-  const root: LibraryRoot = {
-    id: crypto.randomUUID(),
-    name: dirHandle.name,
-    handle: dirHandle,
-    created_at: new Date(),
-    updated_at: new Date(),
-    last_granted_at: new Date(),
-  };
-  await libraryRootAPI.add(root);
-  await db.dirHandle.put({ id: root.id, handle: dirHandle });
-  return scanLibraryRoot(root);
 }
 
 export async function scanLibraryRoot(root: LibraryRoot) {
