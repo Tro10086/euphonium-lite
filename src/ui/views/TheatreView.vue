@@ -31,6 +31,7 @@ const route = useRoute()
 const router = useRouter()
 const videoRef = ref<HTMLVideoElement | null>(null)
 const playerSectionRef = ref<HTMLElement | null>(null)
+const noteEditorRef = ref<HTMLTextAreaElement | null>(null)
 const realAnime = ref<Anime | null>(null)
 const realEpisodes = ref<Episode[]>([])
 const filesByEpisode = ref<Record<string, VideoFile[]>>({})
@@ -129,6 +130,8 @@ const noRenderableVideoMessage =
   '当前浏览器只解码出了声音，没有可显示的视频画面。通常是视频编码或封装不受原生播放器支持，请换用 H.264/AAC MP4 或 WebM，或先转码后播放。'
 let shouldPlayOnReady = false
 let videoFrameCheckTimer: number | null = null
+let noteAutosaveTimer: number | null = null
+let isHydratingNote = false
 
 const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null)
 const currentFiles = computed(() => {
@@ -138,6 +141,12 @@ const currentFiles = computed(() => {
 const activeVideoFile = computed(() => currentFiles.value[currentSourceIdx.value] || null)
 const noteTargetId = computed(() => activeEpisode.value?.id ?? realAnime.value?.id ?? '')
 const noteTargetType = computed(() => (activeEpisode.value ? 'episode' : 'anime'))
+const noteAttachmentPreviewById = computed(
+  () => new Map(noteAttachmentPreviews.value.map((preview) => [preview.id, preview])),
+)
+const notePreviewHtml = computed(() =>
+  renderNoteMarkdown(noteText.value, noteAttachmentPreviewById.value),
+)
 const sourceOptions = computed(() => {
   if (!hasRealData.value) return ['暂无可播放文件']
   return currentFiles.value.length
@@ -171,6 +180,88 @@ const infoPanelToggleLabel = computed(() =>
 const theatreContainerClass = computed(() => ({
   'info-panel-collapsed': !isCompactTheatre.value && isInfoPanelCollapsed.value,
 }))
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function renderInlineText(value: string) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+    )
+}
+
+function renderInlineNoteMarkdown(
+  value: string,
+  attachments: Map<string, { id: string; name: string; url: string }>,
+) {
+  const imagePattern = /!\[([^\]]*)\]\(attachment:([^)]+)\)/g
+  const parts: string[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = imagePattern.exec(value))) {
+    parts.push(renderInlineText(value.slice(lastIndex, match.index)))
+    const alt = match[1] ?? '截图'
+    const attachmentId = match[2] ?? ''
+    const attachment = attachments.get(attachmentId)
+    if (attachment) {
+      parts.push(
+        `<img class="note-inline-image" src="${escapeHtml(attachment.url)}" alt="${escapeHtml(
+          alt || attachment.name,
+        )}" title="${escapeHtml(attachment.name)}" />`,
+      )
+    } else {
+      parts.push(renderInlineText(match[0]))
+    }
+    lastIndex = match.index + match[0].length
+  }
+
+  parts.push(renderInlineText(value.slice(lastIndex)))
+  return parts.join('')
+}
+
+function renderNoteMarkdown(
+  markdown: string,
+  attachments: Map<string, { id: string; name: string; url: string }>,
+) {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const html: string[] = []
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd()
+    if (!line.trim()) continue
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/)
+    if (heading) {
+      const level = heading[1]?.length ?? 1
+      html.push(`<h${level}>${renderInlineNoteMarkdown(heading[2] ?? '', attachments)}</h${level}>`)
+      continue
+    }
+
+    html.push(`<p>${renderInlineNoteMarkdown(line, attachments)}</p>`)
+  }
+
+  return html.join('\n')
+}
+
+function ensureAttachmentMarkers(text: string, attachmentIds: string[]) {
+  const missingIds = attachmentIds.filter((id) => !text.includes(`](attachment:${id})`))
+  if (missingIds.length === 0) return text
+
+  const markers = missingIds.map((id) => `![截图](attachment:${id})`).join('\n')
+  return text.trim() ? `${text.trimEnd()}\n${markers}` : markers
+}
 
 const updatePlayerFrame = () => {
   const section = playerSectionRef.value
@@ -359,6 +450,12 @@ async function loadNoteAttachmentPreviews(ids: string[]) {
     name: attachment.name,
     url: URL.createObjectURL(attachment.blob),
   }))
+}
+
+function clearNoteAutosaveTimer() {
+  if (noteAutosaveTimer === null) return
+  window.clearTimeout(noteAutosaveTimer)
+  noteAutosaveTimer = null
 }
 
 async function getSubtitleStartDirectory(file: VideoFile) {
@@ -622,44 +719,69 @@ const saveProgress = async () => {
 }
 
 function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
-  const paragraphs: TipTapJSON[] = text.split('\n').map((line) => ({
-    type: 'paragraph',
-    content: line ? [{ type: 'text', text: line }] : [],
-  }))
+  const imagePattern = /!\[([^\]]*)\]\(attachment:([^)]+)\)/g
+  const attachmentIdSet = new Set(attachmentIds)
+  const content: TipTapJSON[] = []
 
-  const images: TipTapJSON[] = attachmentIds.map((attachmentId) => ({
-    type: 'image',
-    attrs: { attachmentId },
-  }))
+  for (const line of text.split('\n')) {
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    imagePattern.lastIndex = 0
+
+    while ((match = imagePattern.exec(line))) {
+      const before = line.slice(lastIndex, match.index)
+      if (before) content.push({ type: 'paragraph', content: [{ type: 'text', text: before }] })
+
+      const attachmentId = match[2] ?? ''
+      if (attachmentIdSet.has(attachmentId)) {
+        content.push({ type: 'image', attrs: { attachmentId, alt: match[1] ?? '' } })
+      } else {
+        content.push({ type: 'paragraph', content: [{ type: 'text', text: match[0] }] })
+      }
+      lastIndex = match.index + match[0].length
+    }
+
+    const rest = line.slice(lastIndex)
+    if (rest || !content.length) {
+      content.push({ type: 'paragraph', content: rest ? [{ type: 'text', text: rest }] : [] })
+    }
+  }
 
   return {
     type: 'doc',
-    content: [...paragraphs, ...images],
+    content,
   }
 }
 
 async function loadNote() {
+  isHydratingNote = true
+  clearNoteAutosaveTimer()
   noteMessage.value = ''
   noteId.value = null
   noteText.value = ''
   noteAttachmentIds.value = []
   clearNoteAttachmentPreviews()
 
-  const targetId = noteTargetId.value
-  if (!targetId) return
+  try {
+    const targetId = noteTargetId.value
+    if (!targetId) return
 
-  const [latestNote] = (await notesAPI.getByTarget(noteTargetType.value, targetId))
-    .slice()
-    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-  if (!latestNote) return
+    const [latestNote] = (await notesAPI.getByTarget(noteTargetType.value, targetId))
+      .slice()
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    if (!latestNote) return
 
-  noteId.value = latestNote.id
-  noteText.value = latestNote.plainText
-  noteAttachmentIds.value = [...latestNote.attachmentIds]
-  await loadNoteAttachmentPreviews(noteAttachmentIds.value)
+    noteId.value = latestNote.id
+    noteAttachmentIds.value = [...latestNote.attachmentIds]
+    noteText.value = ensureAttachmentMarkers(latestNote.plainText, noteAttachmentIds.value)
+    await loadNoteAttachmentPreviews(noteAttachmentIds.value)
+  } finally {
+    isHydratingNote = false
+  }
 }
 
 async function saveNote(message = '笔记已保存', force = false) {
+  clearNoteAutosaveTimer()
   const targetId = noteTargetId.value
   if (!targetId) return
   if (!force && !noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) {
@@ -675,6 +797,22 @@ async function saveNote(message = '笔记已保存', force = false) {
     attachmentIds: [...noteAttachmentIds.value],
   })
   noteMessage.value = message
+}
+
+function scheduleNoteAutosave() {
+  if (isHydratingNote) return
+  if (!noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) return
+
+  clearNoteAutosaveTimer()
+  noteAutosaveTimer = window.setTimeout(() => {
+    noteAutosaveTimer = null
+    void saveNote('笔记已自动保存')
+  }, 1500)
+}
+
+async function flushNoteAutosave(message = '笔记已自动保存') {
+  clearNoteAutosaveTimer()
+  await saveNote(message)
 }
 
 const toggleFavorite = async () => {
@@ -694,7 +832,29 @@ const toggleFavorite = async () => {
 function insertTimestampNote() {
   const seconds = Math.max(0, Math.floor(currentTime.value))
   const label = `[${formatTime(seconds)}]`
-  noteText.value = noteText.value ? `${noteText.value}\n${label} ` : `${label} `
+  insertIntoNote(`${label} `)
+}
+
+function insertIntoNote(value: string) {
+  const textarea = noteEditorRef.value
+  if (!textarea) {
+    noteText.value = noteText.value ? `${noteText.value}\n${value}` : value
+    return
+  }
+
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const prefix = noteText.value.slice(0, start)
+  const suffix = noteText.value.slice(end)
+  const separatorBefore = prefix && !prefix.endsWith('\n') ? '\n' : ''
+  const separatorAfter = suffix && !suffix.startsWith('\n') ? '\n' : ''
+  noteText.value = `${prefix}${separatorBefore}${value}${separatorAfter}${suffix}`
+
+  void nextTick(() => {
+    const cursor = start + separatorBefore.length + value.length
+    textarea.focus()
+    textarea.setSelectionRange(cursor, cursor)
+  })
 }
 
 async function captureScreenshotNote() {
@@ -729,6 +889,7 @@ async function captureScreenshotNote() {
     blob,
   })
   noteAttachmentIds.value = [...noteAttachmentIds.value, attachmentId]
+  insertIntoNote(`![截图](attachment:${attachmentId})`)
   await loadNoteAttachmentPreviews(noteAttachmentIds.value)
   await saveNote('截图已加入笔记', true)
 }
@@ -747,7 +908,7 @@ const setEpisode = async (index: number, options: { autoplay?: boolean } = { aut
 
   shouldPlayOnReady = options.autoplay ?? true
   await saveProgress()
-  await saveNote('笔记已自动保存')
+  await flushNoteAutosave()
   activeEpisodeIdx.value = index
   if (!hasRealData.value) {
     currentTime.value = 0
@@ -952,7 +1113,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   void saveProgress()
-  void saveNote('笔记已自动保存')
+  void flushNoteAutosave()
   clearVideoFrameCheck()
   revokePlaybackUrl(videoUrl.value)
   clearSubtitle()
@@ -985,6 +1146,10 @@ watch([activeVideoFile, activeEpisodeIdx], () => {
 
 watch(noteTargetId, () => {
   void loadNote()
+})
+
+watch(noteText, () => {
+  scheduleNoteAutosave()
 })
 
 watch(volume, (value) => {
@@ -1272,20 +1437,16 @@ watch(playbackRate, (value) => {
                 </div>
               </header>
               <textarea
+                ref="noteEditorRef"
                 v-model="noteText"
                 class="note-editor"
                 placeholder="记录这集的分镜、台词、感想..."
               ></textarea>
-              <div v-if="noteAttachmentPreviews.length" class="note-attachment-strip">
-                <img
-                  v-for="preview in noteAttachmentPreviews"
-                  :key="preview.id"
-                  :src="preview.url"
-                  :alt="preview.name"
-                  :title="preview.name"
-                  class="note-attachment-thumb"
-                />
-              </div>
+              <article
+                v-if="notePreviewHtml"
+                class="note-preview"
+                v-html="notePreviewHtml"
+              ></article>
               <footer class="notes-footer">
                 <span v-if="noteAttachmentIds.length">附件 {{ noteAttachmentIds.length }} 个</span>
                 <span v-if="noteMessage">{{ noteMessage }}</span>
@@ -1482,7 +1643,7 @@ watch(playbackRate, (value) => {
   width: 100%;
   height: 4px;
   background-color: rgba(255, 255, 255, 0.2);
-  border-radius: 2px;
+  border-radius: 999px;
   position: relative;
   overflow: hidden;
 }
@@ -1490,7 +1651,7 @@ watch(playbackRate, (value) => {
 .progress-fill {
   height: 100%;
   background-color: white;
-  border-radius: 2px;
+  border-radius: inherit;
 }
 
 .progress-slider {
@@ -2025,20 +2186,34 @@ watch(playbackRate, (value) => {
   border-color: var(--primary);
 }
 
-.note-attachment-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.note-preview {
+  max-height: 220px;
   margin-top: 10px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background-color: var(--surface-low);
+  color: var(--on-surface);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-.note-attachment-thumb {
-  width: 96px;
-  height: 54px;
-  object-fit: cover;
+.note-preview :deep(p),
+.note-preview :deep(h1),
+.note-preview :deep(h2),
+.note-preview :deep(h3) {
+  margin: 0 0 10px;
+}
+
+.note-preview :deep(.note-inline-image) {
+  display: block;
+  max-width: min(100%, 260px);
+  height: auto;
+  margin: 8px 0;
   border: 1px solid var(--outline-variant);
   border-radius: 8px;
-  background-color: var(--surface-low);
+  background-color: var(--surface);
 }
 
 .notes-footer {

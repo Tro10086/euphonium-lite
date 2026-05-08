@@ -267,8 +267,9 @@ const editorEpisode = computed(() => {
 const editorAnchors = computed(() =>
   parseTimeAnchors(editorText.value, editorEpisode.value?.duration_seconds),
 )
-const editorPreviewHtml = computed(() => renderMarkdown(editorText.value))
-const editorAttachmentPreviews = computed(() => activeCard.value?.attachments ?? [])
+const editorPreviewHtml = computed(() =>
+  renderMarkdown(editorText.value, attachmentPreviewById.value),
+)
 const editorWordCount = computed(() => countWords(editorText.value))
 const selectedCount = computed(() => selectedNoteIds.value.size)
 const selectedDraftTargetLabel = computed(
@@ -323,19 +324,37 @@ function plainTextFromTipTapJson(json: TipTapJSON): string {
 }
 
 function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
-  const paragraphs: TipTapJSON[] = text.split('\n').map((line) => ({
-    type: 'paragraph',
-    content: line ? [{ type: 'text', text: line }] : [],
-  }))
+  const imagePattern = /!\[([^\]]*)\]\(attachment:([^)]+)\)/g
+  const attachmentIdSet = new Set(attachmentIds)
+  const content: TipTapJSON[] = []
 
-  const images: TipTapJSON[] = attachmentIds.map((attachmentId) => ({
-    type: 'image',
-    attrs: { attachmentId },
-  }))
+  for (const line of text.split('\n')) {
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    imagePattern.lastIndex = 0
+
+    while ((match = imagePattern.exec(line))) {
+      const before = line.slice(lastIndex, match.index)
+      if (before) content.push({ type: 'paragraph', content: [{ type: 'text', text: before }] })
+
+      const attachmentId = match[2] ?? ''
+      if (attachmentIdSet.has(attachmentId)) {
+        content.push({ type: 'image', attrs: { attachmentId, alt: match[1] ?? '' } })
+      } else {
+        content.push({ type: 'paragraph', content: [{ type: 'text', text: match[0] }] })
+      }
+      lastIndex = match.index + match[0].length
+    }
+
+    const rest = line.slice(lastIndex)
+    if (rest || !content.length) {
+      content.push({ type: 'paragraph', content: rest ? [{ type: 'text', text: rest }] : [] })
+    }
+  }
 
   return {
     type: 'doc',
-    content: [...paragraphs, ...images],
+    content,
   }
 }
 
@@ -383,7 +402,7 @@ function escapeHtml(value: string) {
     .replace(/'/g, '&#39;')
 }
 
-function renderInlineMarkdown(value: string) {
+function renderInlineText(value: string) {
   return escapeHtml(value)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -394,7 +413,34 @@ function renderInlineMarkdown(value: string) {
     )
 }
 
-function renderMarkdown(markdown: string) {
+function renderInlineMarkdown(value: string, attachments: Record<string, NoteAttachmentPreview>) {
+  const imagePattern = /!\[([^\]]*)\]\(attachment:([^)]+)\)/g
+  const parts: string[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = imagePattern.exec(value))) {
+    parts.push(renderInlineText(value.slice(lastIndex, match.index)))
+    const alt = match[1] ?? '截图'
+    const attachmentId = match[2] ?? ''
+    const attachment = attachments[attachmentId]
+    if (attachment) {
+      parts.push(
+        `<img class="note-inline-image" src="${escapeHtml(attachment.url)}" alt="${escapeHtml(
+          alt || attachment.name,
+        )}" title="${escapeHtml(attachment.name)}" />`,
+      )
+    } else {
+      parts.push(renderInlineText(match[0]))
+    }
+    lastIndex = match.index + match[0].length
+  }
+
+  parts.push(renderInlineText(value.slice(lastIndex)))
+  return parts.join('')
+}
+
+function renderMarkdown(markdown: string, attachments: Record<string, NoteAttachmentPreview>) {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
   const html: string[] = []
   let inCodeBlock = false
@@ -432,13 +478,15 @@ function renderMarkdown(markdown: string) {
       const marker = heading[1] ?? '#'
       const content = heading[2] ?? ''
       const level = marker.length
-      html.push(`<h${level}>${renderInlineMarkdown(content)}</h${level}>`)
+      html.push(`<h${level}>${renderInlineMarkdown(content, attachments)}</h${level}>`)
       continue
     }
 
     if (/^>\s+/.test(line)) {
       closeList()
-      html.push(`<blockquote>${renderInlineMarkdown(line.replace(/^>\s+/, ''))}</blockquote>`)
+      html.push(
+        `<blockquote>${renderInlineMarkdown(line.replace(/^>\s+/, ''), attachments)}</blockquote>`,
+      )
       continue
     }
 
@@ -449,7 +497,7 @@ function renderMarkdown(markdown: string) {
         listType = 'ul'
         html.push('<ul>')
       }
-      html.push(`<li>${renderInlineMarkdown(unordered[1] ?? '')}</li>`)
+      html.push(`<li>${renderInlineMarkdown(unordered[1] ?? '', attachments)}</li>`)
       continue
     }
 
@@ -460,17 +508,25 @@ function renderMarkdown(markdown: string) {
         listType = 'ol'
         html.push('<ol>')
       }
-      html.push(`<li>${renderInlineMarkdown(ordered[1] ?? '')}</li>`)
+      html.push(`<li>${renderInlineMarkdown(ordered[1] ?? '', attachments)}</li>`)
       continue
     }
 
     closeList()
-    html.push(`<p>${renderInlineMarkdown(line)}</p>`)
+    html.push(`<p>${renderInlineMarkdown(line, attachments)}</p>`)
   }
 
   closeList()
   if (inCodeBlock) html.push('</code></pre>')
   return html.join('\n')
+}
+
+function ensureAttachmentMarkers(text: string, attachmentIds: string[]) {
+  const missingIds = attachmentIds.filter((id) => !text.includes(`](attachment:${id})`))
+  if (missingIds.length === 0) return text
+
+  const markers = missingIds.map((id) => `![截图](attachment:${id})`).join('\n')
+  return text.trim() ? `${text.trimEnd()}\n${markers}` : markers
 }
 
 function formatDate(value: Date | null) {
@@ -581,7 +637,7 @@ function openEditor(card: NoteCard) {
 
   activeNoteId.value = card.note.id
   isCreating.value = false
-  editorText.value = card.fullText
+  editorText.value = ensureAttachmentMarkers(card.fullText, card.note.attachmentIds)
   editorMessage.value = ''
   editorMode.value = 'split'
   clearSelection()
@@ -1123,19 +1179,11 @@ onUnmounted(() => {
                 class="note-editor"
                 placeholder="记录这部动画或某一集的想法..."
               ></textarea>
-              <article v-show="editorMode !== 'edit'" class="markdown-preview">
-                <div v-html="editorPreviewHtml"></div>
-                <div v-if="editorAttachmentPreviews.length" class="markdown-attachments">
-                  <img
-                    v-for="attachment in editorAttachmentPreviews"
-                    :key="attachment.id"
-                    :src="attachment.url"
-                    :alt="attachment.name"
-                    :title="attachment.name"
-                    class="markdown-attachment-image"
-                  />
-                </div>
-              </article>
+              <article
+                v-show="editorMode !== 'edit'"
+                class="markdown-preview"
+                v-html="editorPreviewHtml"
+              ></article>
             </div>
           </section>
 
@@ -1221,17 +1269,27 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.notes-page {
+  height: calc(100vh - 108px);
+  overflow: hidden;
+}
+
 .notes-view {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 24px;
-  min-height: calc(100vh - 108px);
+  height: 100%;
+  min-height: 0;
 }
 
 .anime-column {
-  min-height: calc(100vh - 108px);
+  height: 100%;
+  min-height: 0;
   border-right: 1px solid var(--outline-variant);
   padding-right: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .anime-search {
@@ -1269,7 +1327,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - 164px);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -1320,7 +1379,11 @@ onUnmounted(() => {
 
 .notes-workspace {
   min-width: 0;
-  min-height: calc(100vh - 108px);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .notes-toolbar,
@@ -1331,8 +1394,15 @@ onUnmounted(() => {
   gap: 18px;
 }
 
+.editor-header,
+.target-row,
+.timestamp-row {
+  flex-shrink: 0;
+}
+
 .notes-toolbar {
   margin-bottom: 24px;
+  flex-shrink: 0;
 }
 
 .toolbar-title {
@@ -1406,7 +1476,10 @@ onUnmounted(() => {
 }
 
 .notes-list-area {
-  min-height: 360px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .note-grid {
@@ -1538,7 +1611,8 @@ onUnmounted(() => {
 }
 
 .editor-layout {
-  min-height: calc(100vh - 108px);
+  height: 100%;
+  min-height: 0;
   padding: 28px;
   border: 1px solid var(--outline-variant);
   border-radius: 16px;
@@ -1546,6 +1620,7 @@ onUnmounted(() => {
   box-shadow: var(--shadow-ambient);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .back-btn {
@@ -1788,6 +1863,7 @@ onUnmounted(() => {
 
 .markdown-editor {
   margin-top: 20px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--outline-variant);
   border-radius: 12px;
@@ -1805,6 +1881,7 @@ onUnmounted(() => {
   padding: 10px 12px;
   border-bottom: 1px solid var(--outline-variant);
   background-color: var(--surface-low);
+  flex-shrink: 0;
 }
 
 .markdown-tools,
@@ -1835,8 +1912,9 @@ onUnmounted(() => {
 .markdown-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  min-height: 420px;
+  min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .markdown-body.mode-edit,
@@ -1846,9 +1924,11 @@ onUnmounted(() => {
 
 .note-editor {
   width: 100%;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   padding: 18px;
-  resize: vertical;
+  resize: none;
+  overflow: auto;
   border: 0;
   border-right: 1px solid var(--outline-variant);
   outline: none;
@@ -1869,7 +1949,7 @@ onUnmounted(() => {
 
 .markdown-preview {
   min-width: 0;
-  min-height: 100%;
+  min-height: 0;
   padding: 18px 22px;
   overflow: auto;
   color: var(--on-surface);
@@ -1930,16 +2010,11 @@ onUnmounted(() => {
   padding-left: 22px;
 }
 
-.markdown-attachments {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-top: 18px;
-}
-
-.markdown-attachment-image {
+.markdown-preview :deep(.note-inline-image) {
+  display: block;
   max-width: 100%;
   height: auto;
+  margin: 14px 0;
   border: 1px solid var(--outline-variant);
   border-radius: 10px;
   background-color: var(--surface-low);
@@ -1947,6 +2022,7 @@ onUnmounted(() => {
 
 .editor-footer {
   display: flex;
+  flex-shrink: 0;
   justify-content: space-between;
   gap: 16px;
   min-height: 24px;
@@ -2023,16 +2099,25 @@ onUnmounted(() => {
 }
 
 @media (max-width: 980px) {
+  .notes-page {
+    height: auto;
+    min-height: calc(100vh - 108px);
+    overflow: visible;
+  }
+
   .notes-view {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .anime-column {
+    height: auto;
     min-height: auto;
     border-right: none;
     border-bottom: 1px solid var(--outline-variant);
     padding-right: 0;
     padding-bottom: 18px;
+    overflow: visible;
   }
 
   .anime-search {
@@ -2041,9 +2126,25 @@ onUnmounted(() => {
 
   .anime-list {
     max-height: none;
+    flex: 0 0 auto;
     flex-direction: row;
     overflow-x: auto;
     padding-bottom: 4px;
+  }
+
+  .notes-workspace {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .notes-list-area {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .editor-layout {
+    height: calc(100vh - 108px);
   }
 
   .anime-item {

@@ -90,39 +90,30 @@ const progressForAnime = (anime: Anime) => {
   const total = anime.total_episodes || episodes.length || 0
   if (total <= 0) return { watchedEpisodes: 0, watchProgress: 0 }
 
-  const lastWatchedIndex = episodes.findIndex(
-    (episode) =>
-      episode.ep === anime.last_watched_episode || episode.sort === anime.last_watched_episode,
-  )
-  if (lastWatchedIndex >= 0) {
-    const currentEpisode = episodes[lastWatchedIndex]
-    const currentPercentage = currentEpisode?.watched
-      ? 100
-      : Math.min(100, Math.max(0, currentEpisode?.watch_percentage ?? 0))
-    const completedEpisodes = lastWatchedIndex + (currentPercentage >= 90 ? 1 : 0)
-    const progressEpisodes = lastWatchedIndex + currentPercentage / 100
-    const watchProgress = Math.min(100, Math.round((progressEpisodes / total) * 100))
-
-    return {
-      watchedEpisodes: Math.min(total, completedEpisodes),
-      watchProgress,
-    }
-  }
-
-  let continuousProgress = 0
-  for (const episode of episodes) {
+  let furthestIndex = -1
+  let furthestPercentage = 0
+  episodes.forEach((episode, index) => {
     const percentage = episode.watched
       ? 100
       : Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
-    if (percentage <= 0) break
-    continuousProgress += percentage / 100
-    if (percentage < 90) break
+    if (percentage <= 0) return
+    if (index > furthestIndex || (index === furthestIndex && percentage > furthestPercentage)) {
+      furthestIndex = index
+      furthestPercentage = percentage
+    }
+  })
+
+  if (furthestIndex >= 0) {
+    const completedEpisodes = furthestIndex + (furthestPercentage >= 90 ? 1 : 0)
+    const progressEpisodes = furthestIndex + furthestPercentage / 100
+
+    return {
+      watchedEpisodes: Math.min(total, completedEpisodes),
+      watchProgress: Math.min(100, Math.round((progressEpisodes / total) * 100)),
+    }
   }
 
-  return {
-    watchedEpisodes: Math.min(total, Math.floor(continuousProgress)),
-    watchProgress: Math.min(100, Math.round((continuousProgress / total) * 100)),
-  }
+  return { watchedEpisodes: 0, watchProgress: 0 }
 }
 
 const libraryCollections = computed<CollectionItem[]>(() =>

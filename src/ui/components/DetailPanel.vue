@@ -22,6 +22,12 @@ const mappingFiles = ref<VideoFile[]>([])
 const mappingOffset = ref(0)
 const mappingStatus = ref('')
 const isMappingLoading = ref(false)
+const progressModalOpen = ref(false)
+const progressEpisodes = ref<Episode[]>([])
+const selectedProgressEpisodeId = ref('')
+const progressPercentInput = ref(0)
+const progressStatus = ref('')
+const isProgressLoading = ref(false)
 const selectedMedia = computed(() => uiState.selectedMedia)
 const progressStats = computed(() => {
   const item = selectedMedia.value
@@ -59,6 +65,7 @@ watch(
   () => {
     isExpanded.value = false
     mappingModalOpen.value = false
+    progressModalOpen.value = false
     checkTruncation()
   },
 )
@@ -92,6 +99,19 @@ const mappingEpisodeOptions = computed(() =>
   }),
 )
 
+const progressEpisodeOptions = computed(() =>
+  progressEpisodes.value.map((episode) => ({
+    id: episode.id,
+    label: `第 ${episode.ep} 集 ${episode.name_cn || episode.name || ''}`.trim(),
+  })),
+)
+
+const selectedProgressEpisode = computed(
+  () =>
+    progressEpisodes.value.find((episode) => episode.id === selectedProgressEpisodeId.value) ??
+    null,
+)
+
 const mappingRows = computed(() => {
   const episodeByFileId = new Map<string, Episode>()
   for (const episode of mappingEpisodes.value) {
@@ -114,6 +134,50 @@ function episodeByNumber(value: number) {
   return mappingEpisodes.value.find(
     (episode) => (episode.sort ?? episode.ep) === value || episode.ep === value,
   )
+}
+
+function episodePercentage(episode: Episode) {
+  if (episode.watched) return 100
+  return Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
+}
+
+function progressFromEpisodes(episodes: Episode[]) {
+  const total =
+    selectedMedia.value?.episodes || selectedMedia.value?.episodesList?.length || episodes.length
+  if (total <= 0) return { watchedEpisodes: 0, watchProgress: 0 }
+
+  let furthestIndex = -1
+  let furthestPercentage = 0
+  episodes.forEach((episode, index) => {
+    const percentage = episodePercentage(episode)
+    if (percentage <= 0) return
+    if (index > furthestIndex || (index === furthestIndex && percentage > furthestPercentage)) {
+      furthestIndex = index
+      furthestPercentage = percentage
+    }
+  })
+
+  if (furthestIndex < 0) return { watchedEpisodes: 0, watchProgress: 0 }
+
+  const completedEpisodes = furthestIndex + (furthestPercentage >= 90 ? 1 : 0)
+  const progressEpisodesValue = furthestIndex + furthestPercentage / 100
+  return {
+    watchedEpisodes: Math.min(total, completedEpisodes),
+    watchProgress: Math.min(100, Math.round((progressEpisodesValue / total) * 100)),
+  }
+}
+
+function furthestProgressEpisode(episodes: Episode[]) {
+  let furthest: Episode | null = null
+  let furthestIndex = -1
+  episodes.forEach((episode, index) => {
+    if (episodePercentage(episode) <= 0) return
+    if (index > furthestIndex) {
+      furthest = episode
+      furthestIndex = index
+    }
+  })
+  return furthest ?? episodes[0] ?? null
 }
 
 async function refreshEpisodeMapping() {
@@ -142,6 +206,88 @@ async function openEpisodeMapping() {
   mappingOffset.value = 0
   mappingStatus.value = ''
   await refreshEpisodeMapping()
+}
+
+async function openProgressEditor() {
+  if (!selectedMedia.value) return
+
+  progressModalOpen.value = true
+  progressStatus.value = ''
+  isProgressLoading.value = true
+  try {
+    progressEpisodes.value = (await episodeAPI.getByAnimeId(String(selectedMedia.value.id))).sort(
+      (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
+    )
+    const target = furthestProgressEpisode(progressEpisodes.value)
+    selectedProgressEpisodeId.value = target?.id ?? ''
+    progressPercentInput.value = target ? episodePercentage(target) : 0
+  } finally {
+    isProgressLoading.value = false
+  }
+}
+
+function closeProgressEditor() {
+  progressModalOpen.value = false
+  progressStatus.value = ''
+}
+
+function syncSelectedProgressPercent() {
+  const episode = selectedProgressEpisode.value
+  progressPercentInput.value = episode ? episodePercentage(episode) : 0
+}
+
+async function saveManualProgress() {
+  const item = selectedMedia.value
+  const episode = selectedProgressEpisode.value
+  if (!item || !episode) return
+
+  const percentage = Math.min(100, Math.max(0, Math.round(Number(progressPercentInput.value) || 0)))
+  const total = Math.max(0, Math.floor(episode.duration_seconds ?? 0))
+  const position =
+    total > 0
+      ? Math.floor((total * percentage) / 100)
+      : percentage > 0
+        ? episode.watch_progress || 1
+        : 0
+  const now = new Date()
+
+  await episodeAPI.update(episode.id, {
+    watch_progress: position,
+    watch_percentage: percentage,
+    watched: percentage >= 90,
+    watched_at: percentage >= 90 ? now : percentage <= 0 ? null : episode.watched_at,
+  })
+
+  if (percentage > 0) {
+    await animeAPI.update(String(item.id), {
+      last_watched_episode: episode.ep,
+      last_watched_position: position,
+      last_watched_at: now,
+      status: 'watching',
+    })
+  }
+
+  progressEpisodes.value = progressEpisodes.value.map((row) =>
+    row.id === episode.id
+      ? {
+          ...row,
+          watch_progress: position,
+          watch_percentage: percentage,
+          watched: percentage >= 90,
+          watched_at: percentage >= 90 ? now : percentage <= 0 ? null : row.watched_at,
+          updated_at: now,
+        }
+      : row,
+  )
+
+  const progress = progressFromEpisodes(progressEpisodes.value)
+  uiState.selectedMedia = {
+    ...item,
+    watchedEpisodes: progress.watchedEpisodes,
+    watchProgress: progress.watchProgress,
+  }
+  uiState.libraryVersion += 1
+  progressStatus.value = '观看进度已更新'
 }
 
 function closeEpisodeMapping() {
@@ -279,7 +425,12 @@ async function resetEpisodeMapping() {
         <!-- Progress Tracking -->
         <div class="progress-card">
           <div class="progress-header">
-            <span class="progress-label">观看进度</span>
+            <div class="progress-title-row">
+              <span class="progress-label">观看进度</span>
+              <button class="progress-edit-btn" title="修改观看进度" @click="openProgressEditor">
+                <Edit3 :size="14" />
+              </button>
+            </div>
             <span class="progress-stats"
               >已观看 {{ progressStats.watched }} / {{ progressStats.total }} 集</span
             >
@@ -337,6 +488,38 @@ async function resetEpisodeMapping() {
       <p v-if="mappingStatus" class="mapping-status">{{ mappingStatus }}</p>
       <template #footer>
         <button class="modal-close-btn" @click="closeEpisodeMapping">完成</button>
+      </template>
+    </BaseModal>
+
+    <BaseModal
+      v-model="progressModalOpen"
+      title="修改观看进度"
+      width="460px"
+      :close-on-overlay="false"
+      @close="closeProgressEditor"
+    >
+      <div v-if="isProgressLoading" class="mapping-empty">正在加载剧集...</div>
+      <div v-else class="progress-editor-form">
+        <label class="progress-field">
+          <span>剧集</span>
+          <select v-model="selectedProgressEpisodeId" @change="syncSelectedProgressPercent">
+            <option v-for="episode in progressEpisodeOptions" :key="episode.id" :value="episode.id">
+              {{ episode.label }}
+            </option>
+          </select>
+        </label>
+        <label class="progress-field">
+          <span>进度百分比</span>
+          <input v-model.number="progressPercentInput" type="number" min="0" max="100" step="1" />
+        </label>
+        <p class="progress-editor-hint">
+          首页会按最远有进度的剧集计算总进度；把误触剧集设为 0 可清除它的影响。
+        </p>
+        <p v-if="progressStatus" class="mapping-status">{{ progressStatus }}</p>
+      </div>
+      <template #footer>
+        <button class="dialog-cancel" @click="closeProgressEditor">取消</button>
+        <button class="modal-close-btn" @click="saveManualProgress">保存</button>
       </template>
     </BaseModal>
   </div>
@@ -452,6 +635,48 @@ async function resetEpisodeMapping() {
   font-weight: 800;
 }
 
+.dialog-cancel {
+  padding: 10px 18px;
+  border-radius: 10px;
+  background-color: var(--surface-low);
+  color: var(--on-surface-variant);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.progress-editor-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.progress-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.progress-field select,
+.progress-field input {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  font-size: 14px;
+}
+
+.progress-editor-hint {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 :deep(.modal-body) {
   max-height: 70vh;
 }
@@ -548,12 +773,30 @@ async function resetEpisodeMapping() {
 .progress-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   margin-bottom: 8px;
   font-size: 12px;
 }
 
+.progress-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .progress-label {
   font-weight: 700;
+}
+
+.progress-edit-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--primary);
+  background-color: var(--surface);
 }
 
 .progress-stats {
@@ -561,14 +804,16 @@ async function resetEpisodeMapping() {
 }
 
 .progress-bar {
-  height: 4px;
+  height: 8px;
+  overflow: hidden;
   background-color: var(--surface-dim);
-  border-radius: 2px;
+  border-radius: 999px;
 }
 
 .progress-fill {
   height: 100%;
   background-color: var(--primary);
+  border-radius: inherit;
 }
 
 .info-section {
