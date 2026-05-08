@@ -25,7 +25,6 @@ const isMappingLoading = ref(false)
 const progressEpisodes = ref<Episode[]>([])
 const isProgressEditing = ref(false)
 const progressEpisodeNumberInput = ref(0)
-const progressStatus = ref('')
 const isProgressLoading = ref(false)
 const selectedMedia = computed(() => uiState.selectedMedia)
 const progressStats = computed(() => {
@@ -184,7 +183,6 @@ async function openProgressEditor() {
   if (!selectedMedia.value) return
 
   isProgressEditing.value = true
-  progressStatus.value = ''
   progressEpisodeNumberInput.value = progressStats.value.watched
   isProgressLoading.value = true
   try {
@@ -199,7 +197,6 @@ async function openProgressEditor() {
 
 function closeProgressEditor() {
   isProgressEditing.value = false
-  progressStatus.value = ''
 }
 
 async function saveManualProgress() {
@@ -252,7 +249,6 @@ async function saveManualProgress() {
     watchProgress: progress.watchProgress,
   }
   uiState.libraryVersion += 1
-  progressStatus.value = '观看进度已更新'
   isProgressEditing.value = false
 }
 
@@ -420,7 +416,6 @@ async function resetEpisodeMapping() {
             </button>
             <button class="progress-inline-cancel" @click="closeProgressEditor">取消</button>
           </div>
-          <p v-if="progressStatus" class="progress-card-status">{{ progressStatus }}</p>
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: `${progressStats.percent}%` }"></div>
           </div>
@@ -749,8 +744,8 @@ async function resetEpisodeMapping() {
 
 .progress-inline-editor input {
   width: 72px;
-  min-height: 34px;
-  padding: 6px 8px;
+  min-height: 28px;
+  padding: 3px 8px;
   border: 1px solid var(--outline-variant);
   border-radius: 8px;
   background-color: var(--surface);
@@ -761,8 +756,8 @@ async function resetEpisodeMapping() {
 
 .progress-inline-save,
 .progress-inline-cancel {
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: 28px;
+  padding: 0 8px;
   border-radius: 8px;
   font-size: 12px;
   font-weight: 800;
@@ -781,13 +776,6 @@ async function resetEpisodeMapping() {
 .progress-inline-cancel {
   background-color: var(--surface);
   color: var(--on-surface-variant);
-}
-
-.progress-card-status {
-  margin: 8px 0 0;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .progress-bar {
