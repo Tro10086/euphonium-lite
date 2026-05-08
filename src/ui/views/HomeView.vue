@@ -91,25 +91,20 @@ const progressForAnime = (anime: Anime) => {
   if (total <= 0) return { watchedEpisodes: 0, watchProgress: 0 }
 
   let furthestIndex = -1
-  let furthestPercentage = 0
   episodes.forEach((episode, index) => {
     const percentage = episode.watched
       ? 100
       : Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
     if (percentage <= 0) return
-    if (index > furthestIndex || (index === furthestIndex && percentage > furthestPercentage)) {
-      furthestIndex = index
-      furthestPercentage = percentage
-    }
+    if (index > furthestIndex) furthestIndex = index
   })
 
   if (furthestIndex >= 0) {
-    const completedEpisodes = furthestIndex + (furthestPercentage >= 90 ? 1 : 0)
-    const progressEpisodes = furthestIndex + furthestPercentage / 100
+    const reachedEpisodes = furthestIndex + 1
 
     return {
-      watchedEpisodes: Math.min(total, completedEpisodes),
-      watchProgress: Math.min(100, Math.round((progressEpisodes / total) * 100)),
+      watchedEpisodes: Math.min(total, reachedEpisodes),
+      watchProgress: Math.min(100, Math.round((reachedEpisodes / total) * 100)),
     }
   }
 

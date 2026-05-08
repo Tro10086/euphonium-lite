@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { uiState } from '@/ui/stores/uiState'
-import { X, Heart, Star, Play, Edit3 } from 'lucide-vue-next'
+import { X, Heart, Star, Play, Edit3, CheckCircle2 } from 'lucide-vue-next'
 import type { Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 import { animeAPI, episodeAPI, fileAPI } from '@/services/storage'
@@ -27,6 +27,8 @@ const progressEpisodes = ref<Episode[]>([])
 const selectedProgressEpisodeId = ref('')
 const progressStatus = ref('')
 const isProgressLoading = ref(false)
+const progressMenuOpen = ref(false)
+const progressDropdownRef = ref<HTMLElement | null>(null)
 const selectedMedia = computed(() => uiState.selectedMedia)
 const progressStats = computed(() => {
   const item = selectedMedia.value
@@ -36,6 +38,12 @@ const progressStats = computed(() => {
   const watched = Math.min(item.watchedEpisodes ?? 0, total)
   const percent = Math.min(100, Math.max(0, item.watchProgress ?? 0))
   return { watched, total, percent }
+})
+const progressStatsLabel = computed(() => {
+  const { watched, total } = progressStats.value
+  if (total <= 0) return '暂无剧集'
+  if (watched <= 0) return `未开始 / ${total} 集`
+  return `看到第 ${watched} / ${total} 集`
 })
 
 const checkTruncation = () => {
@@ -50,13 +58,21 @@ const checkTruncation = () => {
   })
 }
 
+const handleDocumentPointerDown = (event: MouseEvent) => {
+  const target = event.target
+  if (target instanceof Node && progressDropdownRef.value?.contains(target)) return
+  progressMenuOpen.value = false
+}
+
 onMounted(() => {
   checkTruncation()
   window.addEventListener('resize', checkTruncation)
+  document.addEventListener('mousedown', handleDocumentPointerDown)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkTruncation)
+  document.removeEventListener('mousedown', handleDocumentPointerDown)
 })
 
 watch(
@@ -65,6 +81,7 @@ watch(
     isExpanded.value = false
     mappingModalOpen.value = false
     progressModalOpen.value = false
+    progressMenuOpen.value = false
     checkTruncation()
   },
 )
@@ -110,6 +127,11 @@ const selectedProgressEpisode = computed(
     progressEpisodes.value.find((episode) => episode.id === selectedProgressEpisodeId.value) ??
     null,
 )
+const selectedProgressEpisodeLabel = computed(
+  () =>
+    progressEpisodeOptions.value.find((option) => option.id === selectedProgressEpisodeId.value)
+      ?.label ?? '选择剧集',
+)
 
 const mappingRows = computed(() => {
   const episodeByFileId = new Map<string, Episode>()
@@ -146,23 +168,18 @@ function progressFromEpisodes(episodes: Episode[]) {
   if (total <= 0) return { watchedEpisodes: 0, watchProgress: 0 }
 
   let furthestIndex = -1
-  let furthestPercentage = 0
   episodes.forEach((episode, index) => {
     const percentage = episodePercentage(episode)
     if (percentage <= 0) return
-    if (index > furthestIndex || (index === furthestIndex && percentage > furthestPercentage)) {
-      furthestIndex = index
-      furthestPercentage = percentage
-    }
+    if (index > furthestIndex) furthestIndex = index
   })
 
   if (furthestIndex < 0) return { watchedEpisodes: 0, watchProgress: 0 }
 
-  const completedEpisodes = furthestIndex + (furthestPercentage >= 90 ? 1 : 0)
-  const progressEpisodesValue = furthestIndex + furthestPercentage / 100
+  const reachedEpisodes = furthestIndex + 1
   return {
-    watchedEpisodes: Math.min(total, completedEpisodes),
-    watchProgress: Math.min(100, Math.round((progressEpisodesValue / total) * 100)),
+    watchedEpisodes: Math.min(total, reachedEpisodes),
+    watchProgress: Math.min(100, Math.round((reachedEpisodes / total) * 100)),
   }
 }
 
@@ -212,6 +229,7 @@ async function openProgressEditor() {
 
   progressModalOpen.value = true
   progressStatus.value = ''
+  progressMenuOpen.value = false
   isProgressLoading.value = true
   try {
     progressEpisodes.value = (await episodeAPI.getByAnimeId(String(selectedMedia.value.id))).sort(
@@ -227,6 +245,17 @@ async function openProgressEditor() {
 function closeProgressEditor() {
   progressModalOpen.value = false
   progressStatus.value = ''
+  progressMenuOpen.value = false
+}
+
+function toggleProgressMenu() {
+  if (progressEpisodeOptions.value.length === 0) return
+  progressMenuOpen.value = !progressMenuOpen.value
+}
+
+function selectProgressEpisode(id: string) {
+  selectedProgressEpisodeId.value = id
+  progressMenuOpen.value = false
 }
 
 async function saveManualProgress() {
@@ -423,9 +452,7 @@ async function resetEpisodeMapping() {
                 <Edit3 :size="14" />
               </button>
             </div>
-            <span class="progress-stats"
-              >已观看 {{ progressStats.watched }} / {{ progressStats.total }} 集</span
-            >
+            <span class="progress-stats">{{ progressStatsLabel }}</span>
           </div>
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: `${progressStats.percent}%` }"></div>
@@ -494,11 +521,41 @@ async function resetEpisodeMapping() {
       <div v-else class="progress-editor-form">
         <label class="progress-field">
           <span>剧集</span>
-          <select v-model="selectedProgressEpisodeId">
-            <option v-for="episode in progressEpisodeOptions" :key="episode.id" :value="episode.id">
-              {{ episode.label }}
-            </option>
-          </select>
+          <div
+            ref="progressDropdownRef"
+            class="target-dropdown progress-target-dropdown"
+            :class="{ open: progressMenuOpen }"
+          >
+            <button
+              id="progress-target-trigger"
+              type="button"
+              class="target-trigger"
+              :aria-expanded="progressMenuOpen"
+              aria-haspopup="listbox"
+              :disabled="progressEpisodeOptions.length === 0"
+              @click="toggleProgressMenu"
+            >
+              <span class="target-trigger-text">{{ selectedProgressEpisodeLabel }}</span>
+            </button>
+            <div
+              v-if="progressMenuOpen"
+              class="target-menu"
+              role="listbox"
+              aria-label="选择观看进度剧集"
+            >
+              <button
+                v-for="episode in progressEpisodeOptions"
+                :key="episode.id"
+                type="button"
+                class="target-option"
+                :class="{ active: episode.id === selectedProgressEpisodeId }"
+                @click="selectProgressEpisode(episode.id)"
+              >
+                <span>{{ episode.label }}</span>
+                <CheckCircle2 v-if="episode.id === selectedProgressEpisodeId" :size="16" />
+              </button>
+            </div>
+          </div>
         </label>
         <p class="progress-editor-hint">
           保存后会把所选剧集及之前视为已看完，后面的剧集进度会被清空。
@@ -647,15 +704,137 @@ async function resetEpisodeMapping() {
   font-weight: 800;
 }
 
-.progress-field select,
-.progress-field input {
-  min-height: 40px;
-  padding: 8px 10px;
+.target-dropdown {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+}
+
+.target-trigger {
+  position: relative;
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 40px 11px 14px;
   border: 1px solid var(--outline-variant);
-  border-radius: 10px;
-  background-color: var(--surface);
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 88%, white),
+    var(--surface-low)
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   color: var(--on-surface);
   font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.target-trigger::after {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--on-surface-variant);
+  border-bottom: 2px solid var(--on-surface-variant);
+  content: '';
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.target-trigger:hover {
+  border-color: var(--primary-container);
+}
+
+.target-trigger:focus-visible {
+  border-color: var(--primary);
+  background-color: var(--surface);
+  box-shadow:
+    0 0 0 3px var(--primary-light),
+    var(--shadow-soft);
+  outline: none;
+}
+
+.target-dropdown.open .target-trigger {
+  border-color: var(--primary);
+  border-bottom-right-radius: 6px;
+  border-bottom-left-radius: 6px;
+  box-shadow:
+    0 0 0 3px var(--primary-light),
+    var(--shadow-soft);
+}
+
+.target-dropdown.open .target-trigger::after {
+  transform: translateY(-35%) rotate(225deg);
+}
+
+.target-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.target-trigger-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-menu {
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  overflow: hidden auto;
+  max-height: 280px;
+  border: 1px solid var(--primary);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+  background: color-mix(in srgb, var(--surface) 92%, white);
+  box-shadow: 0 18px 36px rgba(26, 28, 26, 0.16);
+}
+
+.target-option {
+  width: 100%;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.target-option + .target-option {
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 75%, transparent);
+}
+
+.target-option:hover,
+.target-option.active {
+  background-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.target-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.target-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.target-menu::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: color-mix(in srgb, var(--on-surface-variant) 35%, transparent);
 }
 
 .progress-editor-hint {
@@ -789,8 +968,12 @@ async function resetEpisodeMapping() {
   box-shadow: none;
 }
 
-.progress-edit-btn:hover {
-  background-color: var(--primary-light);
+.progress-edit-btn:hover,
+.progress-edit-btn:focus-visible {
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--primary);
+  outline: none;
 }
 
 .progress-stats {
