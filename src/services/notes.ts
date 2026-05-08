@@ -191,4 +191,13 @@ export const attachmentAPI = {
     }))
   },
 
+  async getByIds(ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids)).filter(Boolean)
+    if (uniqueIds.length === 0) return []
+    return notesDb.attachments.where('id').anyOf(uniqueIds).toArray()
+  },
+
+  async getByNoteId(noteId: string) {
+    return notesDb.attachments.where('noteId').equals(noteId).toArray()
+  },
 }

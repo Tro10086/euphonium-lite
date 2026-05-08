@@ -29,8 +29,8 @@ import {
   X,
 } from 'lucide-vue-next'
 import type { Anime, Episode } from '@/models/Anime'
-import type { Note, NoteTargetType, TipTapJSON } from '@/models/Note'
-import { notesAPI } from '@/services/notes'
+import type { Attachment, Note, NoteTargetType, TipTapJSON } from '@/models/Note'
+import { attachmentAPI, notesAPI } from '@/services/notes'
 import { animeAPI, episodeAPI } from '@/services/storage'
 import { uiState } from '@/ui/stores/uiState'
 import BaseModal from '@/ui/components/BaseModal.vue'
@@ -43,6 +43,13 @@ interface TimeAnchor {
   seconds: number
 }
 
+interface NoteAttachmentPreview {
+  id: string
+  name: string
+  mimeType: string
+  url: string
+}
+
 interface NoteCard {
   note: Note
   anime: Anime
@@ -53,6 +60,7 @@ interface NoteCard {
   fullText: string
   wordCount: number
   attachmentCount: number
+  attachments: NoteAttachmentPreview[]
   anchors: TimeAnchor[]
   updatedAt: Date | null
   deletedAt: Date | null
@@ -65,6 +73,7 @@ const router = useRouter()
 const animes = ref<Anime[]>([])
 const episodes = ref<Episode[]>([])
 const notes = ref<Note[]>([])
+const attachmentPreviewById = ref<Record<string, NoteAttachmentPreview>>({})
 const selectedAnimeId = ref('')
 const searchQuery = ref('')
 const trashMode = ref(false)
@@ -141,6 +150,9 @@ const allCards = computed<NoteCard[]>(() => {
       fullText: text,
       wordCount: countWords(text),
       attachmentCount: note.attachmentIds.length,
+      attachments: note.attachmentIds
+        .map((id) => attachmentPreviewById.value[id])
+        .filter((attachment): attachment is NoteAttachmentPreview => Boolean(attachment)),
       anchors: parseTimeAnchors(text, context.episode?.duration_seconds),
       updatedAt: toDate(note.updated_at),
       deletedAt: toDate(note.deleted_at),
@@ -256,6 +268,7 @@ const editorAnchors = computed(() =>
   parseTimeAnchors(editorText.value, editorEpisode.value?.duration_seconds),
 )
 const editorPreviewHtml = computed(() => renderMarkdown(editorText.value))
+const editorAttachmentPreviews = computed(() => activeCard.value?.attachments ?? [])
 const editorWordCount = computed(() => countWords(editorText.value))
 const selectedCount = computed(() => selectedNoteIds.value.size)
 const selectedDraftTargetLabel = computed(
@@ -476,6 +489,31 @@ function parseTargetKey(key: string): { targetType: NoteTargetType; targetId: st
   return { targetType, targetId }
 }
 
+function revokeAttachmentPreviews() {
+  for (const preview of Object.values(attachmentPreviewById.value)) URL.revokeObjectURL(preview.url)
+  attachmentPreviewById.value = {}
+}
+
+function createAttachmentPreview(attachment: Attachment): NoteAttachmentPreview {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    url: URL.createObjectURL(attachment.blob),
+  }
+}
+
+async function refreshAttachmentPreviews(noteRows: Note[]) {
+  const attachmentIds = Array.from(new Set(noteRows.flatMap((note) => note.attachmentIds)))
+  revokeAttachmentPreviews()
+  if (attachmentIds.length === 0) return
+
+  const attachments = await attachmentAPI.getByIds(attachmentIds)
+  attachmentPreviewById.value = Object.fromEntries(
+    attachments.map((attachment) => [attachment.id, createAttachmentPreview(attachment)]),
+  )
+}
+
 async function refreshData() {
   isLoading.value = true
   try {
@@ -486,6 +524,7 @@ async function refreshData() {
     ])
     animes.value = animeRows
     episodes.value = episodeRows
+    await refreshAttachmentPreviews(noteRows)
     notes.value = noteRows
   } finally {
     isLoading.value = false
@@ -819,6 +858,7 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('keydown', handleWindowKeydown)
   clearSaveStatusTimer()
+  revokeAttachmentPreviews()
 })
 </script>
 
@@ -857,7 +897,12 @@ onUnmounted(() => {
 
           <div class="toolbar-actions header-actions">
             <span v-if="selectionMode" class="selection-summary">已选 {{ selectedCount }}</span>
-            <button v-if="trashMode" class="tool-btn" :disabled="selectionMode" @click="toggleTrashMode">
+            <button
+              v-if="trashMode"
+              class="tool-btn"
+              :disabled="selectionMode"
+              @click="toggleTrashMode"
+            >
               <X :size="16" />
               <span>退出</span>
             </button>
@@ -871,7 +916,12 @@ onUnmounted(() => {
               <span>新建</span>
             </button>
 
-            <button class="tool-btn" :title="sortLabel" :disabled="selectionMode" @click="cycleSort">
+            <button
+              class="tool-btn"
+              :title="sortLabel"
+              :disabled="selectionMode"
+              @click="cycleSort"
+            >
               <ArrowUpDown :size="16" />
               <span>按{{ sortShortLabel }}排序</span>
             </button>
@@ -962,11 +1012,7 @@ onUnmounted(() => {
 
           <div v-if="isCreating" class="target-row">
             <label id="note-target-label" for="note-target-trigger">所属</label>
-            <div
-              ref="targetDropdownRef"
-              class="target-dropdown"
-              :class="{ open: targetMenuOpen }"
-            >
+            <div ref="targetDropdownRef" class="target-dropdown" :class="{ open: targetMenuOpen }">
               <button
                 id="note-target-trigger"
                 type="button"
@@ -979,7 +1025,12 @@ onUnmounted(() => {
               >
                 <span class="target-trigger-text">{{ selectedDraftTargetLabel }}</span>
               </button>
-              <div v-if="targetMenuOpen" class="target-menu" role="listbox" aria-label="选择所属目标">
+              <div
+                v-if="targetMenuOpen"
+                class="target-menu"
+                role="listbox"
+                aria-label="选择所属目标"
+              >
                 <button
                   v-for="option in newTargetOptions"
                   :key="option.key"
@@ -1072,11 +1123,19 @@ onUnmounted(() => {
                 class="note-editor"
                 placeholder="记录这部动画或某一集的想法..."
               ></textarea>
-              <article
-                v-show="editorMode !== 'edit'"
-                class="markdown-preview"
-                v-html="editorPreviewHtml"
-              ></article>
+              <article v-show="editorMode !== 'edit'" class="markdown-preview">
+                <div v-html="editorPreviewHtml"></div>
+                <div v-if="editorAttachmentPreviews.length" class="markdown-attachments">
+                  <img
+                    v-for="attachment in editorAttachmentPreviews"
+                    :key="attachment.id"
+                    :src="attachment.url"
+                    :alt="attachment.name"
+                    :title="attachment.name"
+                    class="markdown-attachment-image"
+                  />
+                </div>
+              </article>
             </div>
           </section>
 
@@ -1123,9 +1182,17 @@ onUnmounted(() => {
                 <CheckSquare v-if="selectedNoteIds.has(card.note.id)" :size="18" />
                 <Square v-else :size="18" />
               </button>
-              <div class="note-cover">
-                <FileText :size="22" />
-                <p>{{ card.excerpt }}</p>
+              <div class="note-cover" :class="{ 'with-image': card.attachments.length }">
+                <img
+                  v-if="card.attachments[0]"
+                  :src="card.attachments[0].url"
+                  :alt="card.attachments[0].name"
+                  class="note-cover-image"
+                />
+                <template v-else>
+                  <FileText :size="22" />
+                  <p>{{ card.excerpt }}</p>
+                </template>
               </div>
               <div class="note-meta">
                 <span>{{ card.targetLabel }}</span>
@@ -1412,6 +1479,17 @@ onUnmounted(() => {
     linear-gradient(150deg, rgba(255, 222, 165, 0.42), transparent 42%), var(--surface-low);
 }
 
+.note-cover.with-image {
+  padding: 0;
+  background: var(--surface-low);
+}
+
+.note-cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .note-cover svg {
   flex: 0 0 auto;
   color: var(--primary);
@@ -1564,8 +1642,11 @@ onUnmounted(() => {
   padding: 11px 40px 11px 14px;
   border: 1px solid var(--outline-variant);
   border-radius: 12px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface) 88%, white), var(--surface-low));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 88%, white),
+    var(--surface-low)
+  );
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   color: var(--on-surface);
   font-size: 14px;
@@ -1847,6 +1928,21 @@ onUnmounted(() => {
 .markdown-preview :deep(ul),
 .markdown-preview :deep(ol) {
   padding-left: 22px;
+}
+
+.markdown-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.markdown-attachment-image {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface-low);
 }
 
 .editor-footer {

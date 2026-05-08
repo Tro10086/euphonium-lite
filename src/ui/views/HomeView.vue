@@ -41,7 +41,8 @@ const sortOptions: Array<{ value: SortMode; label: string }> = [
 
 const isTrashView = computed(() => uiState.homeFilter === 'trash')
 const activeCollection = computed(
-  () => uiState.customCollections.find((collection) => collection.id === uiState.homeFilter) ?? null,
+  () =>
+    uiState.customCollections.find((collection) => collection.id === uiState.homeFilter) ?? null,
 )
 const isCustomCollectionView = computed(() => Boolean(activeCollection.value))
 const activeCollectionAnimeIdSet = computed(
@@ -83,18 +84,45 @@ const uniqueTags = (tags: string[] | undefined) =>
   Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)))
 
 const progressForAnime = (anime: Anime) => {
-  const episodes = episodesByAnimeId.value[anime.id] ?? []
+  const episodes = [...(episodesByAnimeId.value[anime.id] ?? [])].sort(
+    (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
+  )
   const total = anime.total_episodes || episodes.length || 0
-  const watchedEpisodes = episodes.filter(
-    (episode) => episode.watched || (episode.watch_percentage ?? 0) >= 90,
-  ).length
-  const progressSum = episodes.reduce((sum, episode) => {
-    if (episode.watched) return sum + 100
-    return sum + Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
-  }, 0)
-  const watchProgress = total > 0 ? Math.round(progressSum / total) : 0
+  if (total <= 0) return { watchedEpisodes: 0, watchProgress: 0 }
 
-  return { watchedEpisodes, watchProgress }
+  const lastWatchedIndex = episodes.findIndex(
+    (episode) =>
+      episode.ep === anime.last_watched_episode || episode.sort === anime.last_watched_episode,
+  )
+  if (lastWatchedIndex >= 0) {
+    const currentEpisode = episodes[lastWatchedIndex]
+    const currentPercentage = currentEpisode?.watched
+      ? 100
+      : Math.min(100, Math.max(0, currentEpisode?.watch_percentage ?? 0))
+    const completedEpisodes = lastWatchedIndex + (currentPercentage >= 90 ? 1 : 0)
+    const progressEpisodes = lastWatchedIndex + currentPercentage / 100
+    const watchProgress = Math.min(100, Math.round((progressEpisodes / total) * 100))
+
+    return {
+      watchedEpisodes: Math.min(total, completedEpisodes),
+      watchProgress,
+    }
+  }
+
+  let continuousProgress = 0
+  for (const episode of episodes) {
+    const percentage = episode.watched
+      ? 100
+      : Math.min(100, Math.max(0, episode.watch_percentage ?? 0))
+    if (percentage <= 0) break
+    continuousProgress += percentage / 100
+    if (percentage < 90) break
+  }
+
+  return {
+    watchedEpisodes: Math.min(total, Math.floor(continuousProgress)),
+    watchProgress: Math.min(100, Math.round((continuousProgress / total) * 100)),
+  }
 }
 
 const libraryCollections = computed<CollectionItem[]>(() =>
@@ -112,7 +140,10 @@ const libraryCollections = computed<CollectionItem[]>(() =>
       userRating: anime.rating || 0,
       desc: anime.summary || '暂无简介',
       image: anime.cover || 'https://picsum.photos/seed/euphonium-local/800/1200',
-      episodesList: Array.from({ length: anime.total_episodes || 1 }, (_, index) => `第 ${index + 1} 集`),
+      episodesList: Array.from(
+        { length: anime.total_episodes || 1 },
+        (_, index) => `第 ${index + 1} 集`,
+      ),
       deletedAt: asDate(anime.deleted_at),
       purgeRequestedAt: asDate(anime.purge_requested_at),
       isFavorite: Boolean(anime.is_favorite),
@@ -131,7 +162,11 @@ const filteredCollections = computed(() => {
     if (isTrashView.value) return Boolean(item.deletedAt) && !item.purgeRequestedAt
     if (isCollectionAddMode.value) return !item.deletedAt && !item.purgeRequestedAt
     if (activeCollection.value) {
-      return activeCollectionAnimeIdSet.value.has(String(item.id)) && !item.deletedAt && !item.purgeRequestedAt
+      return (
+        activeCollectionAnimeIdSet.value.has(String(item.id)) &&
+        !item.deletedAt &&
+        !item.purgeRequestedAt
+      )
     }
     return !item.deletedAt && !item.purgeRequestedAt
   })
@@ -172,9 +207,7 @@ const filteredCollections = computed(() => {
   } else if (uiState.sortOrder === 'time') {
     list.sort(
       (a, b) =>
-        b.year - a.year ||
-        timeValue(b.updatedAt) - timeValue(a.updatedAt) ||
-        compareName(a, b),
+        b.year - a.year || timeValue(b.updatedAt) - timeValue(a.updatedAt) || compareName(a, b),
     )
   } else {
     list.sort(
@@ -343,7 +376,9 @@ const restoreFromTrash = async (item: CollectionItem) => {
 }
 
 const markTrashDeleted = async (item: CollectionItem) => {
-  const ok = window.confirm(`确定要从回收站移除「${item.title}」吗？数据仍会以软删除状态保留在 IndexedDB。`)
+  const ok = window.confirm(
+    `确定要从回收站移除「${item.title}」吗？数据仍会以软删除状态保留在 IndexedDB。`,
+  )
   if (!ok) return
 
   await animeAPI.markTrashDeleted(String(item.id))
@@ -374,12 +409,15 @@ const markSelectedTrashDeleted = async () => {
   const ids = Array.from(selectedTrashIds.value)
   if (ids.length === 0) return
 
-  const ok = window.confirm(`确定要从回收站移除选中的 ${ids.length} 个条目吗？数据仍会以软删除状态保留在 IndexedDB。`)
+  const ok = window.confirm(
+    `确定要从回收站移除选中的 ${ids.length} 个条目吗？数据仍会以软删除状态保留在 IndexedDB。`,
+  )
   if (!ok) return
 
   await animeAPI.markTrashDeletedBulk(ids)
   setTrashSelection([])
-  if (uiState.selectedMedia && ids.includes(String(uiState.selectedMedia.id))) uiState.selectedMedia = null
+  if (uiState.selectedMedia && ids.includes(String(uiState.selectedMedia.id)))
+    uiState.selectedMedia = null
   await refreshAnimes()
 }
 
@@ -481,11 +519,19 @@ onMounted(async () => {
             <Square v-else :size="16" />
             <span>{{ allTrashSelected ? '取消全选' : '全选' }}</span>
           </button>
-          <button class="tool-btn" :disabled="selectedTrashCount === 0" @click="restoreSelectedTrash">
+          <button
+            class="tool-btn"
+            :disabled="selectedTrashCount === 0"
+            @click="restoreSelectedTrash"
+          >
             <RotateCcw :size="16" />
             <span>复原</span>
           </button>
-          <button class="tool-btn danger" :disabled="selectedTrashCount === 0" @click="markSelectedTrashDeleted">
+          <button
+            class="tool-btn danger"
+            :disabled="selectedTrashCount === 0"
+            @click="markSelectedTrashDeleted"
+          >
             <Trash2 :size="16" />
             <span>删除</span>
           </button>
@@ -498,7 +544,11 @@ onMounted(async () => {
             <Square v-else :size="16" />
             <span>{{ allCollectionAddSelected ? '取消全选' : '全选' }}</span>
           </button>
-          <button class="tool-btn" :disabled="selectedCollectionAddCount === 0" @click="void addSelectedToCollection()">
+          <button
+            class="tool-btn"
+            :disabled="selectedCollectionAddCount === 0"
+            @click="void addSelectedToCollection()"
+          >
             <Plus :size="16" />
             <span>添加</span>
           </button>
@@ -509,8 +559,14 @@ onMounted(async () => {
         </template>
 
         <template v-else-if="isCustomCollectionView && activeCollection">
-          <span v-if="isCollectionSelectionMode" class="selection-summary">已选{{ selectedCollectionCount }}</span>
-          <button v-if="isCollectionSelectionMode" class="tool-btn" @click="toggleSelectAllCollection">
+          <span v-if="isCollectionSelectionMode" class="selection-summary"
+            >已选{{ selectedCollectionCount }}</span
+          >
+          <button
+            v-if="isCollectionSelectionMode"
+            class="tool-btn"
+            @click="toggleSelectAllCollection"
+          >
             <CheckSquare v-if="allCollectionSelected" :size="16" />
             <Square v-else :size="16" />
             <span>{{ allCollectionSelected ? '取消全选' : '全选' }}</span>
@@ -524,7 +580,11 @@ onMounted(async () => {
             <Trash2 :size="16" />
             <span>移出合集</span>
           </button>
-          <button v-if="isCollectionSelectionMode" class="tool-btn" @click="toggleCollectionSelectionMode">
+          <button
+            v-if="isCollectionSelectionMode"
+            class="tool-btn"
+            @click="toggleCollectionSelectionMode"
+          >
             <X :size="16" />
             <span>退出</span>
           </button>
@@ -549,7 +609,11 @@ onMounted(async () => {
           <Filter :size="16" />
           <span>筛选</span>
         </button>
-        <button class="tool-btn" :disabled="isCustomCollectionView && isCollectionSelectionMode" @click="toggleSort">
+        <button
+          class="tool-btn"
+          :disabled="isCustomCollectionView && isCollectionSelectionMode"
+          @click="toggleSort"
+        >
           <ArrowUpDown :size="16" />
           <span>{{ sortLabel }}</span>
         </button>
@@ -604,7 +668,11 @@ onMounted(async () => {
           <img :src="item.image" :alt="item.title" class="item-img" />
 
           <button
-            v-if="!isTrashView && !isCollectionAddMode && !(isCustomCollectionView && isCollectionSelectionMode)"
+            v-if="
+              !isTrashView &&
+              !isCollectionAddMode &&
+              !(isCustomCollectionView && isCollectionSelectionMode)
+            "
             class="card-action-btn delete-card-btn"
             title="移入回收站"
             @click.stop="moveToTrash(item)"
@@ -620,7 +688,10 @@ onMounted(async () => {
             <Trash2 :size="16" />
           </button>
 
-          <span v-if="isCollectionAddMode && isItemAlreadyInCollection(item.id)" class="card-status-badge">
+          <span
+            v-if="isCollectionAddMode && isItemAlreadyInCollection(item.id)"
+            class="card-status-badge"
+          >
             已添加
           </span>
 
@@ -639,7 +710,11 @@ onMounted(async () => {
             </div>
             <div class="overlay-right">
               <button
-                v-if="!isTrashView && !isCollectionAddMode && !(isCustomCollectionView && isCollectionSelectionMode)"
+                v-if="
+                  !isTrashView &&
+                  !isCollectionAddMode &&
+                  !(isCustomCollectionView && isCollectionSelectionMode)
+                "
                 class="play-btn-gradient"
                 @click.stop="enterTheatre(item)"
               >

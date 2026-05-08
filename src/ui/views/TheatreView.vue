@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Captions,
+  CaptionsOff,
   Gauge,
   Heart,
   SkipBack,
@@ -42,6 +43,7 @@ const noteId = ref<string | null>(null)
 const noteText = ref('')
 const noteAttachmentIds = ref<string[]>([])
 const noteMessage = ref('')
+const noteAttachmentPreviews = ref<Array<{ id: string; name: string; url: string }>>([])
 
 const hasRealData = computed(() => Boolean(realAnime.value))
 const uniqueTags = (tags: string[] | undefined) =>
@@ -121,7 +123,7 @@ const playerFrameStyle = computed(() => ({
   width: playerFrameWidth.value,
 }))
 let playerResizeObserver: ResizeObserver | null = null
-const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 5]
+const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2]
 const playbackRate = ref(1)
 const noRenderableVideoMessage =
   '当前浏览器只解码出了声音，没有可显示的视频画面。通常是视频编码或封装不受原生播放器支持，请换用 H.264/AAC MP4 或 WebM，或先转码后播放。'
@@ -147,7 +149,8 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100))
 })
 const volumePercent = computed(() => Math.min(100, Math.max(0, volume.value)))
-const playbackRateLabel = computed(() => `${playbackRate.value}x`)
+const formatPlaybackRate = (rate: number) => `${Number.isInteger(rate) ? rate.toFixed(1) : rate}x`
+const playbackRateLabel = computed(() => formatPlaybackRate(playbackRate.value))
 const canPickSubtitle = computed(
   () => typeof window !== 'undefined' && 'showOpenFilePicker' in window,
 )
@@ -341,6 +344,23 @@ const clearSubtitle = () => {
   subtitleLabel.value = ''
 }
 
+const clearNoteAttachmentPreviews = () => {
+  for (const preview of noteAttachmentPreviews.value) URL.revokeObjectURL(preview.url)
+  noteAttachmentPreviews.value = []
+}
+
+async function loadNoteAttachmentPreviews(ids: string[]) {
+  clearNoteAttachmentPreviews()
+  if (ids.length === 0) return
+
+  const attachments = await attachmentAPI.getByIds(ids)
+  noteAttachmentPreviews.value = attachments.map((attachment) => ({
+    id: attachment.id,
+    name: attachment.name,
+    url: URL.createObjectURL(attachment.blob),
+  }))
+}
+
 async function getSubtitleStartDirectory(file: VideoFile) {
   if (!file.root_id) return null
 
@@ -529,6 +549,15 @@ async function pickSubtitleFile() {
   }
 }
 
+async function toggleSubtitle() {
+  if (subtitleUrl.value) {
+    clearSubtitle()
+    return
+  }
+
+  await pickSubtitleFile()
+}
+
 const getRouteEpisodeId = () => {
   const value = route.query.episodeId
   return typeof value === 'string' ? value : ''
@@ -614,12 +643,28 @@ async function loadNote() {
   noteId.value = null
   noteText.value = ''
   noteAttachmentIds.value = []
-}
+  clearNoteAttachmentPreviews()
 
-async function saveNote(message = '笔记已保存') {
   const targetId = noteTargetId.value
   if (!targetId) return
-  if (!noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) return
+
+  const [latestNote] = (await notesAPI.getByTarget(noteTargetType.value, targetId))
+    .slice()
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+  if (!latestNote) return
+
+  noteId.value = latestNote.id
+  noteText.value = latestNote.plainText
+  noteAttachmentIds.value = [...latestNote.attachmentIds]
+  await loadNoteAttachmentPreviews(noteAttachmentIds.value)
+}
+
+async function saveNote(message = '笔记已保存', force = false) {
+  const targetId = noteTargetId.value
+  if (!targetId) return
+  if (!force && !noteId.value && !noteText.value.trim() && noteAttachmentIds.value.length === 0) {
+    return
+  }
 
   noteId.value = await notesAPI.save({
     id: noteId.value ?? undefined,
@@ -674,7 +719,7 @@ async function captureScreenshotNote() {
     return
   }
 
-  await saveNote('笔记已保存，正在添加截图...')
+  await saveNote('笔记已保存，正在添加截图...', true)
   if (!noteId.value) return
 
   const attachmentId = await attachmentAPI.put({
@@ -684,7 +729,8 @@ async function captureScreenshotNote() {
     blob,
   })
   noteAttachmentIds.value = [...noteAttachmentIds.value, attachmentId]
-  await saveNote('截图已加入笔记')
+  await loadNoteAttachmentPreviews(noteAttachmentIds.value)
+  await saveNote('截图已加入笔记', true)
 }
 
 let lastProgressSaveAt = 0
@@ -910,6 +956,7 @@ onUnmounted(() => {
   clearVideoFrameCheck()
   revokePlaybackUrl(videoUrl.value)
   clearSubtitle()
+  clearNoteAttachmentPreviews()
   playerResizeObserver?.disconnect()
   window.removeEventListener('resize', updatePlayerFrame)
   window.removeEventListener('resize', updateTheatreMode)
@@ -1057,7 +1104,7 @@ watch(playbackRate, (value) => {
                       @click="selectPlaybackRate(rate)"
                       :class="{ active: playbackRate === rate }"
                     >
-                      {{ rate }}x
+                      {{ formatPlaybackRate(rate) }}
                     </button>
                   </div>
                 </div>
@@ -1083,10 +1130,11 @@ watch(playbackRate, (value) => {
                   v-if="canPickSubtitle"
                   class="control-icon"
                   :class="{ active: Boolean(subtitleUrl) }"
-                  :title="subtitleLabel || '加载字幕'"
-                  @click="pickSubtitleFile"
+                  :title="subtitleUrl ? '关闭字幕' : '加载字幕'"
+                  @click="toggleSubtitle"
                 >
-                  <Captions :size="20" />
+                  <CaptionsOff v-if="subtitleUrl" :size="20" />
+                  <Captions v-else :size="20" />
                 </button>
 
                 <div class="volume-container">
@@ -1228,6 +1276,16 @@ watch(playbackRate, (value) => {
                 class="note-editor"
                 placeholder="记录这集的分镜、台词、感想..."
               ></textarea>
+              <div v-if="noteAttachmentPreviews.length" class="note-attachment-strip">
+                <img
+                  v-for="preview in noteAttachmentPreviews"
+                  :key="preview.id"
+                  :src="preview.url"
+                  :alt="preview.name"
+                  :title="preview.name"
+                  class="note-attachment-thumb"
+                />
+              </div>
               <footer class="notes-footer">
                 <span v-if="noteAttachmentIds.length">附件 {{ noteAttachmentIds.length }} 个</span>
                 <span v-if="noteMessage">{{ noteMessage }}</span>
@@ -1965,6 +2023,22 @@ watch(playbackRate, (value) => {
 
 .note-editor:focus {
   border-color: var(--primary);
+}
+
+.note-attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.note-attachment-thumb {
+  width: 96px;
+  height: 54px;
+  object-fit: cover;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  background-color: var(--surface-low);
 }
 
 .notes-footer {

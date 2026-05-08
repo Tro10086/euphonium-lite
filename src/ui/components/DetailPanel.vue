@@ -1,163 +1,344 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import { useRouter } from 'vue-router';
-import { uiState } from '@/ui/stores/uiState';
-import { X, Heart, Star, Play } from 'lucide-vue-next';
-import { animeAPI } from '@/services/storage';
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
+import { uiState } from '@/ui/stores/uiState'
+import { X, Heart, Star, Play, Edit3 } from 'lucide-vue-next'
+import type { Episode } from '@/models/Anime'
+import type { VideoFile } from '@/models/File'
+import { animeAPI, episodeAPI, fileAPI } from '@/services/storage'
+import BaseModal from '@/ui/components/BaseModal.vue'
+import EpisodeFileMappingEditor from '@/ui/components/EpisodeFileMappingEditor.vue'
+import { parseVideoFileName } from '@/utils/fileNameParser'
 
-const emit = defineEmits(['close']);
-const router = useRouter();
+const emit = defineEmits(['close'])
+const router = useRouter()
 
-const isExpanded = ref(false);
-const showExpandBtn = ref(false);
-const descRef = ref<HTMLElement | null>(null);
-const selectedMedia = computed(() => uiState.selectedMedia);
+const isExpanded = ref(false)
+const showExpandBtn = ref(false)
+const descRef = ref<HTMLElement | null>(null)
+const mappingModalOpen = ref(false)
+const mappingEpisodes = ref<Episode[]>([])
+const mappingFiles = ref<VideoFile[]>([])
+const mappingOffset = ref(0)
+const mappingStatus = ref('')
+const isMappingLoading = ref(false)
+const selectedMedia = computed(() => uiState.selectedMedia)
 const progressStats = computed(() => {
-  const item = selectedMedia.value;
-  if (!item) return { watched: 0, total: 0, percent: 0 };
+  const item = selectedMedia.value
+  if (!item) return { watched: 0, total: 0, percent: 0 }
 
-  const total = item.episodes || item.episodesList?.length || 0;
-  const watched = Math.min(item.watchedEpisodes ?? 0, total);
-  const percent = Math.min(100, Math.max(0, item.watchProgress ?? 0));
-  return { watched, total, percent };
-});
+  const total = item.episodes || item.episodesList?.length || 0
+  const watched = Math.min(item.watchedEpisodes ?? 0, total)
+  const percent = Math.min(100, Math.max(0, item.watchProgress ?? 0))
+  return { watched, total, percent }
+})
 
 const checkTruncation = () => {
   nextTick(() => {
     if (descRef.value) {
-      const el = descRef.value;
+      const el = descRef.value
       // When clamped to 2 lines, clientHeight is the height of 2 lines.
       // scrollHeight is the height of the entire content.
       // We add a 2px buffer to account for sub-pixel rendering/rounding issues.
-      showExpandBtn.value = el.scrollHeight > el.clientHeight + 2;
+      showExpandBtn.value = el.scrollHeight > el.clientHeight + 2
     }
-  });
-};
+  })
+}
 
 onMounted(() => {
-  checkTruncation();
-  window.addEventListener('resize', checkTruncation);
-});
+  checkTruncation()
+  window.addEventListener('resize', checkTruncation)
+})
 
 onUnmounted(() => {
-  window.removeEventListener('resize', checkTruncation);
-});
+  window.removeEventListener('resize', checkTruncation)
+})
 
-watch(() => uiState.selectedMedia, () => {
-  isExpanded.value = false;
-  checkTruncation();
-});
+watch(
+  () => uiState.selectedMedia,
+  () => {
+    isExpanded.value = false
+    mappingModalOpen.value = false
+    checkTruncation()
+  },
+)
 
 const goToTheatre = () => {
-  if (!uiState.selectedMedia) return;
-  const id = uiState.selectedMedia.id;
-  uiState.selectedMedia = null;
-  router.push({ name: 'theatre', params: { id } });
-};
+  if (!uiState.selectedMedia) return
+  const id = uiState.selectedMedia.id
+  uiState.selectedMedia = null
+  router.push({ name: 'theatre', params: { id } })
+}
 
 const toggleFavorite = async () => {
-  if (!uiState.selectedMedia) return;
+  if (!uiState.selectedMedia) return
 
-  const nextValue = !uiState.selectedMedia.isFavorite;
-  await animeAPI.update(String(uiState.selectedMedia.id), { is_favorite: nextValue });
+  const nextValue = !uiState.selectedMedia.isFavorite
+  await animeAPI.update(String(uiState.selectedMedia.id), { is_favorite: nextValue })
   uiState.selectedMedia = {
     ...uiState.selectedMedia,
     isFavorite: nextValue,
-  };
-  uiState.libraryVersion += 1;
-};
+  }
+  uiState.libraryVersion += 1
+}
+
+const mappingEpisodeOptions = computed(() =>
+  mappingEpisodes.value.map((episode) => {
+    const number = episode.sort ?? episode.ep
+    return {
+      episode: number,
+      title: episode.name_cn || episode.name || `第 ${number} 集`,
+    }
+  }),
+)
+
+const mappingRows = computed(() => {
+  const episodeByFileId = new Map<string, Episode>()
+  for (const episode of mappingEpisodes.value) {
+    for (const fileId of episode.file_ids ?? []) episodeByFileId.set(fileId, episode)
+  }
+
+  return mappingFiles.value.map((file) => {
+    const episode = episodeByFileId.get(file.id)
+    const selectedEpisode = episode ? (episode.sort ?? episode.ep) : 0
+    return {
+      fileId: file.id,
+      fileName: file.name,
+      selectedEpisode,
+      parsedEpisode: parseVideoFileName(file.name).episode || 0,
+    }
+  })
+})
+
+function episodeByNumber(value: number) {
+  return mappingEpisodes.value.find(
+    (episode) => (episode.sort ?? episode.ep) === value || episode.ep === value,
+  )
+}
+
+async function refreshEpisodeMapping() {
+  if (!selectedMedia.value) return
+
+  isMappingLoading.value = true
+  try {
+    const animeId = String(selectedMedia.value.id)
+    const episodes = (await episodeAPI.getByAnimeId(animeId)).sort(
+      (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
+    )
+    const episodeFileIds = new Set(episodes.flatMap((episode) => episode.file_ids ?? []))
+    const files = (await fileAPI.getAll())
+      .filter((file) => file.anime_id === animeId || episodeFileIds.has(file.id))
+      .sort((a, b) => (a.path || a.name).localeCompare(b.path || b.name))
+
+    mappingEpisodes.value = episodes
+    mappingFiles.value = Array.from(new Map(files.map((file) => [file.id, file])).values())
+  } finally {
+    isMappingLoading.value = false
+  }
+}
+
+async function openEpisodeMapping() {
+  mappingModalOpen.value = true
+  mappingOffset.value = 0
+  mappingStatus.value = ''
+  await refreshEpisodeMapping()
+}
+
+function closeEpisodeMapping() {
+  mappingModalOpen.value = false
+  mappingStatus.value = ''
+}
+
+async function persistMappingRows(rows: Array<{ fileId: string; selectedEpisode: number }>) {
+  if (!selectedMedia.value) return
+
+  const animeId = String(selectedMedia.value.id)
+  const fileById = new Map(mappingFiles.value.map((file) => [file.id, file]))
+  const fileIdsByEpisodeId = new Map(
+    mappingEpisodes.value.map((episode) => [episode.id, [] as string[]]),
+  )
+
+  for (const row of rows) {
+    const targetEpisode = episodeByNumber(row.selectedEpisode)
+    if (targetEpisode) fileIdsByEpisodeId.get(targetEpisode.id)?.push(row.fileId)
+  }
+
+  const filesToUpdate = rows
+    .map((row): VideoFile | null => {
+      const file = fileById.get(row.fileId)
+      if (!file) return null
+      const targetEpisode = episodeByNumber(row.selectedEpisode)
+      return {
+        ...file,
+        anime_id: animeId,
+        ep_id: targetEpisode?.id,
+      }
+    })
+    .filter((file): file is VideoFile => Boolean(file))
+
+  await Promise.all([
+    ...mappingEpisodes.value.map((episode) =>
+      episodeAPI.update(episode.id, { file_ids: fileIdsByEpisodeId.get(episode.id) ?? [] }),
+    ),
+    fileAPI.update(filesToUpdate),
+  ])
+
+  mappingStatus.value = '已保存剧集对应关系'
+  uiState.libraryVersion += 1
+  await refreshEpisodeMapping()
+}
+
+async function updateMappingFileEpisode(fileId: string, episode: number) {
+  const rows = mappingRows.value.map((row) =>
+    row.fileId === fileId ? { ...row, selectedEpisode: episode } : row,
+  )
+  await persistMappingRows(rows)
+}
+
+function adjustMappingOffset(delta: number) {
+  mappingOffset.value = Number(mappingOffset.value ?? 0) + delta
+}
+
+async function applyMappingOffset() {
+  const offset = Number(mappingOffset.value ?? 0)
+  const rows = mappingRows.value.map((row) => ({
+    ...row,
+    selectedEpisode: row.selectedEpisode > 0 ? Math.max(0, row.selectedEpisode + offset) : 0,
+  }))
+  await persistMappingRows(rows)
+}
+
+async function resetEpisodeMapping() {
+  const rows = mappingRows.value.map((row) => ({
+    ...row,
+    selectedEpisode: row.parsedEpisode || 0,
+  }))
+  mappingOffset.value = 0
+  await persistMappingRows(rows)
+}
 </script>
 
 <template>
   <div class="detail-wrapper">
     <!-- Click outside overlay -->
     <div class="overlay" @click="emit('close')"></div>
-    
+
     <aside v-if="selectedMedia" class="detail-panel glass-panel">
       <!-- Header -->
-    <header class="header">
-      <button class="close-btn" @click="emit('close')">
-        <X :size="20" />
-      </button>
-      <div class="actions">
-        <button class="plain-heart-btn" :class="{ active: selectedMedia.isFavorite }" @click="toggleFavorite">
-          <Heart
-            :size="22"
-            :fill="selectedMedia.isFavorite ? '#c62828' : 'none'"
-            :color="selectedMedia.isFavorite ? '#c62828' : 'currentColor'"
-          />
+      <header class="header">
+        <button class="close-btn" @click="emit('close')">
+          <X :size="20" />
         </button>
-      </div>
-    </header>
+        <div class="actions">
+          <button
+            class="plain-heart-btn"
+            :class="{ active: selectedMedia.isFavorite }"
+            @click="toggleFavorite"
+          >
+            <Heart
+              :size="22"
+              :fill="selectedMedia.isFavorite ? '#c62828' : 'none'"
+              :color="selectedMedia.isFavorite ? '#c62828' : 'currentColor'"
+            />
+          </button>
+          <button class="plain-action-btn" title="修改集数对应关系" @click="openEpisodeMapping">
+            <Edit3 :size="21" />
+          </button>
+        </div>
+      </header>
 
-    <div class="panel-content">
-      <!-- Media Hero -->
-      <div class="hero-image">
-        <img :src="selectedMedia.image" :alt="selectedMedia.title" />
-      </div>
+      <div class="panel-content">
+        <!-- Media Hero -->
+        <div class="hero-image">
+          <img :src="selectedMedia.image" :alt="selectedMedia.title" />
+        </div>
 
-      <!-- Title & Score -->
-      <div class="title-section">
-        <div class="title-row">
-          <h2 class="title">{{ selectedMedia.title }}</h2>
-          <div class="score-badge">
-            <Star :size="16" class="star-filled" />
-            <span>{{ selectedMedia.score }}</span>
+        <!-- Title & Score -->
+        <div class="title-section">
+          <div class="title-row">
+            <h2 class="title">{{ selectedMedia.title }}</h2>
+            <div class="score-badge">
+              <Star :size="16" class="star-filled" />
+              <span>{{ selectedMedia.score }}</span>
+            </div>
+          </div>
+          <div class="tags-row">
+            <span class="year">{{ selectedMedia.year }}</span>
+            <span class="dot">·</span>
+            <span class="epis">{{ selectedMedia.episodes }} 集</span>
+            <span class="dot" v-if="selectedMedia.tags?.length">·</span>
+            <div class="tag-group">
+              <span v-for="(tag, index) in selectedMedia.tags" :key="tag" class="tag-pill">
+                {{ tag }}
+                <span v-if="index < selectedMedia.tags.length - 1" class="inner-dot">·</span>
+              </span>
+            </div>
           </div>
         </div>
-        <div class="tags-row">
-          <span class="year">{{ selectedMedia.year }}</span>
-          <span class="dot">·</span>
-          <span class="epis">{{ selectedMedia.episodes }} 集</span>
-          <span class="dot" v-if="selectedMedia.tags?.length">·</span>
-          <div class="tag-group">
-            <span v-for="(tag, index) in selectedMedia.tags" :key="tag" class="tag-pill">
-              {{ tag }}
-              <span v-if="index < selectedMedia.tags.length - 1" class="inner-dot">·</span>
-            </span>
+
+        <!-- Progress Tracking -->
+        <div class="progress-card">
+          <div class="progress-header">
+            <span class="progress-label">观看进度</span>
+            <span class="progress-stats"
+              >已观看 {{ progressStats.watched }} / {{ progressStats.total }} 集</span
+            >
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: `${progressStats.percent}%` }"></div>
           </div>
         </div>
+
+        <!-- Description -->
+        <div class="info-section">
+          <h3 class="info-title">作品简介</h3>
+          <p ref="descRef" class="description" :class="{ expanded: isExpanded }">
+            {{ selectedMedia.desc }}
+          </p>
+          <button v-if="showExpandBtn" class="expand-btn" @click="isExpanded = !isExpanded">
+            {{ isExpanded ? '收起' : '展开全部' }}
+          </button>
+        </div>
       </div>
 
-      <!-- Progress Tracking -->
-      <div class="progress-card">
-        <div class="progress-header">
-          <span class="progress-label">观看进度</span>
-          <span class="progress-stats">已观看 {{ progressStats.watched }} / {{ progressStats.total }} 集</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" :style="{ width: `${progressStats.percent}%` }"></div>
-        </div>
-      </div>
-
-      <!-- Description -->
-      <div class="info-section">
-        <h3 class="info-title">作品简介</h3>
-        <p 
-          ref="descRef" 
-          class="description" 
-          :class="{ 'expanded': isExpanded }"
-        >
-          {{ selectedMedia.desc }}
-        </p>
-        <button 
-          v-if="showExpandBtn" 
-          class="expand-btn" 
-          @click="isExpanded = !isExpanded"
-        >
-          {{ isExpanded ? '收起' : '展开全部' }}
+      <!-- Sticky Footer -->
+      <footer class="footer">
+        <button class="btn-play" @click="goToTheatre">
+          <Play :size="20" class="play-filled" />
+          <span>进入放映厅</span>
         </button>
-      </div>
-    </div>
-
-    <!-- Sticky Footer -->
-    <footer class="footer">
-      <button class="btn-play" @click="goToTheatre">
-        <Play :size="20" class="play-filled" />
-        <span>进入放映厅</span>
-      </button>
-    </footer>
+      </footer>
     </aside>
+
+    <BaseModal
+      v-model="mappingModalOpen"
+      title="修改集数对应关系"
+      width="980px"
+      :close-on-overlay="false"
+      @close="closeEpisodeMapping"
+    >
+      <div v-if="isMappingLoading" class="mapping-empty">正在加载文件...</div>
+      <div v-else-if="mappingRows.length === 0" class="mapping-empty">
+        当前条目还没有可调整的本地文件。
+      </div>
+      <EpisodeFileMappingEditor
+        v-else
+        v-model:offset-value="mappingOffset"
+        compact
+        title="剧集匹配"
+        description="修改会立即保存到本地库"
+        :rows="mappingRows"
+        :episode-options="mappingEpisodeOptions"
+        @update-file-episode="updateMappingFileEpisode"
+        @adjust-offset="adjustMappingOffset"
+        @apply-offset="applyMappingOffset"
+        @reset-mapping="resetEpisodeMapping"
+      />
+      <p v-if="mappingStatus" class="mapping-status">{{ mappingStatus }}</p>
+      <template #footer>
+        <button class="modal-close-btn" @click="closeEpisodeMapping">完成</button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -190,8 +371,12 @@ const toggleFavorite = async () => {
 }
 
 @keyframes slideIn {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 .header {
@@ -201,6 +386,12 @@ const toggleFavorite = async () => {
   align-items: center;
   padding: 0 32px;
   flex-shrink: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .close-btn {
@@ -220,7 +411,8 @@ const toggleFavorite = async () => {
   color: var(--primary);
 }
 
-.plain-heart-btn {
+.plain-heart-btn,
+.plain-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -228,8 +420,40 @@ const toggleFavorite = async () => {
   transition: all 0.3s ease;
 }
 
-.plain-heart-btn:hover {
+.plain-heart-btn:hover,
+.plain-action-btn:hover {
   transform: scale(1.1);
+  color: var(--primary);
+}
+
+.mapping-empty {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--on-surface-variant);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mapping-status {
+  margin-top: 12px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.modal-close-btn {
+  padding: 10px 18px;
+  border-radius: 10px;
+  background-color: var(--primary);
+  color: white;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+:deep(.modal-body) {
+  max-height: 70vh;
 }
 
 .panel-content {
@@ -291,7 +515,8 @@ const toggleFavorite = async () => {
   white-space: nowrap;
 }
 
-.dot, .inner-dot {
+.dot,
+.inner-dot {
   color: var(--primary);
   font-weight: 900;
   opacity: 0.6;

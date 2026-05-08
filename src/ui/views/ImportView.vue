@@ -1,61 +1,77 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
-import { FolderOpen, HardDrive, Edit2, Radar, FileJson, FileCode, Check, HelpCircle, Search, Trash2, X } from 'lucide-vue-next';
-import BaseButton from '@/ui/components/BaseButton.vue';
-import type { BangumiAnime } from '@/models/Bangumi';
-import type { BangumiEpisode } from '@/models/Bangumi';
-import type { VideoFile } from '@/models/File';
-import type { LibraryRoot } from '@/models/Library';
-import type { MatchRecord } from '@/models/Match';
-import { getLibraryRoots, requestLibraryRoot, scanLibraryRoot } from '@/services/fileSystem';
-import { claimMatchForImport, createMatch, manualSearchMatch } from '@/services/match';
-import { saveMatchResult } from '@/services/dataWriter';
-import { fileAPI, matchAPI } from '@/services/storage';
-import { getAnime, getEpisodes } from '@/services/bangumi';
-import { parseVideoFileName } from '@/utils/fileNameParser';
-import { formatImportResult, importBackupJsonFile, reloadAfterImport } from '@/ui/utils/backupTransfer';
+import { computed, onMounted, reactive, ref } from 'vue'
+import {
+  FolderOpen,
+  HardDrive,
+  Edit2,
+  Radar,
+  FileJson,
+  Check,
+  HelpCircle,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-vue-next'
+import BaseButton from '@/ui/components/BaseButton.vue'
+import EpisodeFileMappingEditor from '@/ui/components/EpisodeFileMappingEditor.vue'
+import type { BangumiAnime } from '@/models/Bangumi'
+import type { BangumiEpisode } from '@/models/Bangumi'
+import type { VideoFile } from '@/models/File'
+import type { LibraryRoot } from '@/models/Library'
+import type { MatchRecord } from '@/models/Match'
+import { getLibraryRoots, requestLibraryRoot, scanLibraryRoot } from '@/services/fileSystem'
+import { claimMatchForImport, createMatch, manualSearchMatch } from '@/services/match'
+import { saveMatchResult } from '@/services/dataWriter'
+import { fileAPI, matchAPI } from '@/services/storage'
+import { getAnime, getEpisodes } from '@/services/bangumi'
+import { parseVideoFileName } from '@/utils/fileNameParser'
+import {
+  formatImportResult,
+  importBackupJsonFile,
+  reloadAfterImport,
+} from '@/ui/utils/backupTransfer'
 
 // File handlers
-const jsonInput = ref<HTMLInputElement | null>(null);
-const roots = ref<LibraryRoot[]>([]);
-const activeRoot = ref<LibraryRoot | null>(null);
-const isBusy = ref(false);
-const statusText = ref('');
-const errorText = ref('');
-const scanSummary = ref<{ added: number; updated: number; missing: number } | null>(null);
-const matches = ref<MatchRecord[]>([]);
-const candidateMap = reactive<Record<string, BangumiAnime[]>>({});
-const selectedCandidateIds = reactive<Record<string, number>>({});
-const episodePreviewMap = reactive<Record<string, BangumiEpisode[]>>({});
-const fileMap = reactive<Record<string, VideoFile>>({});
-const offsetInputs = reactive<Record<string, number>>({});
-const confirmingKeys = reactive(new Set<string>());
-const manualMatchOpenKeys = reactive(new Set<string>());
-const manualMatchingKeys = reactive(new Set<string>());
-const manualKeywordInputs = reactive<Record<string, string>>({});
-const manualMatchErrors = reactive<Record<string, string>>({});
+const jsonInput = ref<HTMLInputElement | null>(null)
+const roots = ref<LibraryRoot[]>([])
+const activeRoot = ref<LibraryRoot | null>(null)
+const isBusy = ref(false)
+const statusText = ref('')
+const errorText = ref('')
+const scanSummary = ref<{ added: number; updated: number; missing: number } | null>(null)
+const matches = ref<MatchRecord[]>([])
+const candidateMap = reactive<Record<string, BangumiAnime[]>>({})
+const selectedCandidateIds = reactive<Record<string, number>>({})
+const episodePreviewMap = reactive<Record<string, BangumiEpisode[]>>({})
+const fileMap = reactive<Record<string, VideoFile>>({})
+const offsetInputs = reactive<Record<string, number>>({})
+const confirmingKeys = reactive(new Set<string>())
+const manualMatchOpenKeys = reactive(new Set<string>())
+const manualMatchingKeys = reactive(new Set<string>())
+const manualKeywordInputs = reactive<Record<string, string>>({})
+const manualMatchErrors = reactive<Record<string, string>>({})
 
 const targetFolderPath = computed(() => {
-  const [firstRoot] = roots.value;
-  if (!firstRoot) return '尚未选择目录';
-  if (roots.value.length === 1) return firstRoot.name;
-  return roots.value.map((root) => root.name).join(' / ');
-});
+  const [firstRoot] = roots.value
+  if (!firstRoot) return '尚未选择目录'
+  if (roots.value.length === 1) return firstRoot.name
+  return roots.value.map((root) => root.name).join(' / ')
+})
 const reviewGroups = computed(() =>
   matches.value
     .filter((match) => match.status !== 'completed')
     .map((match) => {
-      const key = match.folder_key ?? match.keyword;
-      const candidates = candidateMap[key] ?? [];
-      const selectedFromState = selectedCandidateIds[key];
-      const selectedFromRecord = match.selected_anime_id || 0;
+      const key = match.folder_key ?? match.keyword
+      const candidates = candidateMap[key] ?? []
+      const selectedFromState = selectedCandidateIds[key]
+      const selectedFromRecord = match.selected_anime_id || 0
       const selectedId = candidates.length
         ? candidates.some((candidate) => candidate.id === selectedFromState)
           ? selectedFromState
           : candidates.some((candidate) => candidate.id === selectedFromRecord)
             ? selectedFromRecord
-            : candidates[0]?.id ?? 0
-        : 0;
+            : (candidates[0]?.id ?? 0)
+        : 0
       return {
         ...match,
         key,
@@ -64,73 +80,73 @@ const reviewGroups = computed(() =>
         selectedId,
         mappingRows: Object.entries(match.draft_mappings ?? {}),
         unmappedFileIds: match.unmapped_file_ids ?? [],
-      };
+      }
     }),
-);
+)
 
-const triggerJsonImport = () => jsonInput.value?.click();
+const triggerJsonImport = () => jsonInput.value?.click()
 const triggerFolderSelect = async () => {
   await runWithStatus('正在请求目录授权...', async () => {
-    activeRoot.value = await requestLibraryRoot();
-    roots.value = await getLibraryRoots();
-  });
-};
+    activeRoot.value = await requestLibraryRoot()
+    roots.value = await getLibraryRoots()
+  })
+}
 
 const onJsonFilePicked = async (event: Event) => {
-  const target = event.target as HTMLInputElement;
-  const file = target.files?.[0];
-  if (!file) return;
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
 
   await runWithStatus('正在导入 JSON 备份...', async () => {
-    const result = await importBackupJsonFile(file);
-    statusText.value = `${formatImportResult(result)}，即将刷新应用`;
-    reloadAfterImport();
-  });
+    const result = await importBackupJsonFile(file)
+    statusText.value = `${formatImportResult(result)}，即将刷新应用`
+    reloadAfterImport()
+  })
 
-  target.value = '';
-};
+  target.value = ''
+}
 
 async function runWithStatus(label: string, task: () => Promise<void>) {
-  if (isBusy.value) return false;
+  if (isBusy.value) return false
 
-  isBusy.value = true;
-  statusText.value = label;
-  errorText.value = '';
+  isBusy.value = true
+  statusText.value = label
+  errorText.value = ''
   try {
-    await task();
-    return true;
+    await task()
+    return true
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : String(error);
-    return false;
+    errorText.value = error instanceof Error ? error.message : String(error)
+    return false
   } finally {
-    isBusy.value = false;
+    isBusy.value = false
   }
 }
 
 async function refreshMatches() {
-  matches.value = await matchAPI.getAll();
+  matches.value = await matchAPI.getAll()
   for (const match of matches.value) {
-    const key = match.folder_key ?? match.keyword;
-    offsetInputs[key] ??= match.offset ?? 0;
+    const key = match.folder_key ?? match.keyword
+    offsetInputs[key] ??= match.offset ?? 0
     if (!match.candidate_bangumi_ids?.length) {
-      delete candidateMap[key];
-      delete selectedCandidateIds[key];
-      delete episodePreviewMap[key];
+      delete candidateMap[key]
+      delete selectedCandidateIds[key]
+      delete episodePreviewMap[key]
     }
   }
-  await refreshFileCache(matches.value);
+  await refreshFileCache(matches.value)
 }
 
 async function refreshFileCache(records: MatchRecord[]) {
   const fileIds = records.flatMap((match) => [
     ...Object.values(match.draft_mappings ?? {}).flat(),
     ...(match.unmapped_file_ids ?? []),
-  ]);
-  const uniqueFileIds = Array.from(new Set(fileIds));
-  if (uniqueFileIds.length === 0) return;
+  ])
+  const uniqueFileIds = Array.from(new Set(fileIds))
+  if (uniqueFileIds.length === 0) return
 
-  const files = await fileAPI.getByIds(uniqueFileIds);
-  for (const file of files) fileMap[file.id] = file;
+  const files = await fileAPI.getByIds(uniqueFileIds)
+  for (const file of files) fileMap[file.id] = file
 }
 
 async function restoreMatchProgress(records: MatchRecord[]) {
@@ -138,66 +154,66 @@ async function restoreMatchProgress(records: MatchRecord[]) {
     records
       .filter((match) => match.status !== 'completed' && match.candidate_bangumi_ids?.length)
       .map(async (match) => {
-        const key = match.folder_key ?? match.keyword;
-        const ids = (match.candidate_bangumi_ids ?? []).slice(0, 4);
+        const key = match.folder_key ?? match.keyword
+        const ids = (match.candidate_bangumi_ids ?? []).slice(0, 4)
         const candidates = await Promise.all(
           ids.map(async (id) => {
             try {
-              return await getAnime(id);
+              return await getAnime(id)
             } catch {
-              return null;
+              return null
             }
           }),
-        );
-        const restoredCandidates = candidates.filter((candidate): candidate is BangumiAnime => Boolean(candidate)).slice(0, 4);
-        candidateMap[key] = restoredCandidates;
-        const selectedId = match.selected_anime_id || restoredCandidates[0]?.id;
+        )
+        const restoredCandidates = candidates
+          .filter((candidate): candidate is BangumiAnime => Boolean(candidate))
+          .slice(0, 4)
+        candidateMap[key] = restoredCandidates
+        const selectedId = match.selected_anime_id || restoredCandidates[0]?.id
         if (selectedId) {
-          selectedCandidateIds[key] = selectedId;
-          await loadEpisodePreview(key, selectedId);
+          selectedCandidateIds[key] = selectedId
+          await loadEpisodePreview(key, selectedId)
         }
       }),
-  );
-}
-
-function findPreviewEpisode(episodes: BangumiEpisode[], epNum: string | number) {
-  const num = Number(epNum);
-  return episodes.find((episode) => episode.type === 0 && (Number(episode.sort) === num || Number(episode.ep) === num));
+  )
 }
 
 function selectedCandidate(item: { candidates: BangumiAnime[]; selectedId?: number }) {
-  return item.candidates.find((candidate) => candidate.id === item.selectedId) ?? item.candidates[0];
+  return item.candidates.find((candidate) => candidate.id === item.selectedId) ?? item.candidates[0]
 }
 
 function posterImage(item: { candidates: BangumiAnime[]; selectedId?: number }) {
-  const candidate = selectedCandidate(item);
-  return candidate?.images?.large ?? candidate?.images?.common ?? candidate?.images?.grid ?? '';
+  const candidate = selectedCandidate(item)
+  return candidate?.images?.large ?? candidate?.images?.common ?? candidate?.images?.grid ?? ''
 }
 
 function fileName(fileId: string) {
-  return fileMap[fileId]?.name ?? fileId;
+  return fileMap[fileId]?.name ?? fileId
 }
 
 function fileSortKey(fileId: string) {
-  const file = fileMap[fileId];
-  return file?.path ?? file?.name ?? fileId;
+  const file = fileMap[fileId]
+  return file?.path ?? file?.name ?? fileId
 }
 
-function episodeTitle(item: { episodePreview: BangumiEpisode[] }, epNum: number) {
-  if (!epNum) return '未选择剧集';
-  const episode = findPreviewEpisode(item.episodePreview, epNum);
-  return episode?.name_cn || episode?.name || '';
+function episodeOptions(item: { episodePreview: BangumiEpisode[] }) {
+  return item.episodePreview
+    .filter((episode) => episode.type === 0)
+    .map((episode) => ({
+      episode: Number(episode.sort ?? episode.ep),
+      title: episode.name_cn || episode.name || `第 ${Number(episode.sort ?? episode.ep)} 集`,
+    }))
 }
 
 function parsedEpisodeForFile(fileId: string) {
-  const file = fileMap[fileId];
-  if (!file) return 0;
-  return parseVideoFileName(file.name).episode || 0;
+  const file = fileMap[fileId]
+  if (!file) return 0
+  return parseVideoFileName(file.name).episode || 0
 }
 
 function fileMatchRows(item: {
-  draft_mappings: Record<number, string[]>;
-  unmappedFileIds: string[];
+  draft_mappings: Record<number, string[]>
+  unmappedFileIds: string[]
 }) {
   const mappedRows = Object.entries(item.draft_mappings ?? {}).flatMap(([ep, fileIds]) =>
     fileIds.map((fileId) => ({
@@ -206,273 +222,274 @@ function fileMatchRows(item: {
       parsedEpisode: parsedEpisodeForFile(fileId) || Number(ep),
       fileName: fileName(fileId),
     })),
-  );
+  )
 
   const unmappedRows = item.unmappedFileIds.map((fileId) => ({
     fileId,
     selectedEpisode: 0,
     parsedEpisode: parsedEpisodeForFile(fileId),
     fileName: fileName(fileId),
-  }));
+  }))
 
-  return [...mappedRows, ...unmappedRows].sort((a, b) => fileSortKey(a.fileId).localeCompare(fileSortKey(b.fileId)));
+  return [...mappedRows, ...unmappedRows].sort((a, b) =>
+    fileSortKey(a.fileId).localeCompare(fileSortKey(b.fileId)),
+  )
 }
 
 function buildMappingsWithFileEpisode(match: MatchRecord, fileId: string, targetEp: number) {
-  const mappings: Record<number, string[]> = {};
+  const mappings: Record<number, string[]> = {}
   for (const [ep, fileIds] of Object.entries(match.draft_mappings ?? {})) {
-    const filtered = fileIds.filter((id) => id !== fileId);
-    if (filtered.length) mappings[Number(ep)] = filtered;
+    const filtered = fileIds.filter((id) => id !== fileId)
+    if (filtered.length) mappings[Number(ep)] = filtered
   }
 
-  const unmappedFileIds = (match.unmapped_file_ids ?? []).filter((id) => id !== fileId);
-  if (targetEp > 0) mappings[targetEp] = Array.from(new Set([...(mappings[targetEp] ?? []), fileId]));
-  else unmappedFileIds.push(fileId);
+  const unmappedFileIds = (match.unmapped_file_ids ?? []).filter((id) => id !== fileId)
+  if (targetEp > 0)
+    mappings[targetEp] = Array.from(new Set([...(mappings[targetEp] ?? []), fileId]))
+  else unmappedFileIds.push(fileId)
 
-  return { mappings, unmappedFileIds: Array.from(new Set(unmappedFileIds)) };
+  return { mappings, unmappedFileIds: Array.from(new Set(unmappedFileIds)) }
 }
 
 async function updateFileEpisode(key: string, fileId: string, value: string | number) {
-  const targetEp = Number(value);
-  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key);
-  if (!match) return;
+  const targetEp = Number(value)
+  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key)
+  if (!match) return
 
-  const { mappings, unmappedFileIds } = buildMappingsWithFileEpisode(match, fileId, targetEp);
+  const { mappings, unmappedFileIds } = buildMappingsWithFileEpisode(match, fileId, targetEp)
 
   await matchAPI.update(key, {
     draft_mappings: mappings,
     unmapped_file_ids: unmappedFileIds,
-  });
+  })
 
-  await refreshMatches();
-}
-
-function onEpisodeSelect(key: string, fileId: string, event: Event) {
-  const target = event.target as HTMLInputElement;
-  void updateFileEpisode(key, fileId, target.value);
+  await refreshMatches()
 }
 
 async function applyEpisodeOffset(key: string) {
-  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key);
-  if (!match) return;
+  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key)
+  if (!match) return
 
-  const offset = Number(offsetInputs[key] ?? 0);
-  const mappings: Record<number, string[]> = {};
-  const unmappedFileIds = [...(match.unmapped_file_ids ?? [])];
+  const offset = Number(offsetInputs[key] ?? 0)
+  const mappings: Record<number, string[]> = {}
+  const unmappedFileIds = [...(match.unmapped_file_ids ?? [])]
 
   for (const [ep, fileIds] of Object.entries(match.draft_mappings ?? {})) {
-    const nextEp = Number(ep) + offset;
-    if (nextEp > 0) mappings[nextEp] = [...(mappings[nextEp] ?? []), ...fileIds];
-    else unmappedFileIds.push(...fileIds);
+    const nextEp = Number(ep) + offset
+    if (nextEp > 0) mappings[nextEp] = [...(mappings[nextEp] ?? []), ...fileIds]
+    else unmappedFileIds.push(...fileIds)
   }
 
   await matchAPI.update(key, {
     draft_mappings: mappings,
     unmapped_file_ids: Array.from(new Set(unmappedFileIds)),
     offset,
-  });
-  await refreshMatches();
+  })
+  await refreshMatches()
 }
 
 function adjustOffset(key: string, delta: number) {
-  offsetInputs[key] = Number(offsetInputs[key] ?? 0) + delta;
+  offsetInputs[key] = Number(offsetInputs[key] ?? 0) + delta
 }
 
 async function resetEpisodeMapping(key: string) {
-  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key);
-  if (!match) return;
+  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key)
+  if (!match) return
 
-  const fileIds = Array.from(new Set([
-    ...Object.values(match.draft_mappings ?? {}).flat(),
-    ...(match.unmapped_file_ids ?? []),
-  ]));
-  const mappings: Record<number, string[]> = {};
-  const unmappedFileIds: string[] = [];
+  const fileIds = Array.from(
+    new Set([
+      ...Object.values(match.draft_mappings ?? {}).flat(),
+      ...(match.unmapped_file_ids ?? []),
+    ]),
+  )
+  const mappings: Record<number, string[]> = {}
+  const unmappedFileIds: string[] = []
 
   for (const fileId of fileIds) {
-    const parsedEp = parsedEpisodeForFile(fileId);
-    if (parsedEp > 0) mappings[parsedEp] = [...(mappings[parsedEp] ?? []), fileId];
-    else unmappedFileIds.push(fileId);
+    const parsedEp = parsedEpisodeForFile(fileId)
+    if (parsedEp > 0) mappings[parsedEp] = [...(mappings[parsedEp] ?? []), fileId]
+    else unmappedFileIds.push(fileId)
   }
 
-  offsetInputs[key] = 0;
+  offsetInputs[key] = 0
   await matchAPI.update(key, {
     draft_mappings: mappings,
     unmapped_file_ids: unmappedFileIds,
     offset: 0,
-  });
-  await refreshMatches();
+  })
+  await refreshMatches()
 }
 
 async function loadEpisodePreview(key: string, bangumiId: number) {
-  if (!bangumiId) return;
-  episodePreviewMap[key] = await getEpisodes(bangumiId);
+  if (!bangumiId) return
+  episodePreviewMap[key] = await getEpisodes(bangumiId)
 }
 
 const selectCandidate = (key: string, bangumiId: number) => {
-  selectedCandidateIds[key] = bangumiId;
-  void loadEpisodePreview(key, bangumiId);
-};
+  selectedCandidateIds[key] = bangumiId
+  void loadEpisodePreview(key, bangumiId)
+}
 
 function openManualMatch(item: {
-  key: string;
-  keyword: string;
-  search_keyword?: string;
-  name?: string;
-  folder_name?: string;
+  key: string
+  keyword: string
+  search_keyword?: string
+  name?: string
+  folder_name?: string
 }) {
-  const currentValue = manualKeywordInputs[item.key]?.trim();
-  manualKeywordInputs[item.key] = currentValue || item.search_keyword || item.name || item.folder_name || item.keyword;
-  manualMatchErrors[item.key] = '';
-  manualMatchOpenKeys.add(item.key);
+  const currentValue = manualKeywordInputs[item.key]?.trim()
+  manualKeywordInputs[item.key] =
+    currentValue || item.search_keyword || item.name || item.folder_name || item.keyword
+  manualMatchErrors[item.key] = ''
+  manualMatchOpenKeys.add(item.key)
 }
 
 function closeManualMatch(key: string) {
-  manualMatchOpenKeys.delete(key);
-  manualMatchErrors[key] = '';
+  manualMatchOpenKeys.delete(key)
+  manualMatchErrors[key] = ''
 }
 
-const isManualMatchOpen = (key: string) => manualMatchOpenKeys.has(key);
-const isManualMatching = (key: string) => manualMatchingKeys.has(key);
+const isManualMatchOpen = (key: string) => manualMatchOpenKeys.has(key)
+const isManualMatching = (key: string) => manualMatchingKeys.has(key)
 
 function selectedIdForConfirm(item: { key: string; selectedId?: number }) {
-  return selectedCandidateIds[item.key] ?? item.selectedId ?? 0;
+  return selectedCandidateIds[item.key] ?? item.selectedId ?? 0
 }
 
 async function submitManualMatch(key: string) {
-  const keyword = manualKeywordInputs[key]?.trim() ?? '';
+  const keyword = manualKeywordInputs[key]?.trim() ?? ''
   if (!keyword) {
-    manualMatchErrors[key] = '请输入动画名称';
-    return;
+    manualMatchErrors[key] = '请输入动画名称'
+    return
   }
-  if (manualMatchingKeys.has(key)) return;
+  if (manualMatchingKeys.has(key)) return
 
-  manualMatchingKeys.add(key);
-  errorText.value = '';
-  statusText.value = `正在用「${keyword}」重新匹配...`;
+  manualMatchingKeys.add(key)
+  errorText.value = ''
+  statusText.value = `正在用「${keyword}」重新匹配...`
 
   try {
-    const topResults = await manualSearchMatch(key, keyword);
+    const topResults = await manualSearchMatch(key, keyword)
     if (topResults.length === 0) {
-      delete candidateMap[key];
-      delete selectedCandidateIds[key];
-      delete episodePreviewMap[key];
-      manualMatchErrors[key] = '无法匹配，无法关联';
-      statusText.value = '无法匹配，无法关联';
-      await refreshMatches();
-      return;
+      delete candidateMap[key]
+      delete selectedCandidateIds[key]
+      delete episodePreviewMap[key]
+      manualMatchErrors[key] = '无法匹配，无法关联'
+      statusText.value = '无法匹配，无法关联'
+      await refreshMatches()
+      return
     }
 
-    const firstResult = topResults[0]!;
-    candidateMap[key] = topResults;
-    selectedCandidateIds[key] = firstResult.id;
-    manualMatchErrors[key] = '';
-    manualMatchOpenKeys.delete(key);
-    await loadEpisodePreview(key, firstResult.id);
-    await refreshMatches();
-    statusText.value = '重新匹配完成，请确认关联结果';
+    const firstResult = topResults[0]!
+    candidateMap[key] = topResults
+    selectedCandidateIds[key] = firstResult.id
+    manualMatchErrors[key] = ''
+    manualMatchOpenKeys.delete(key)
+    await loadEpisodePreview(key, firstResult.id)
+    await refreshMatches()
+    statusText.value = '重新匹配完成，请确认关联结果'
   } catch (error) {
-    manualMatchErrors[key] = error instanceof Error ? error.message : String(error);
+    manualMatchErrors[key] = error instanceof Error ? error.message : String(error)
   } finally {
-    manualMatchingKeys.delete(key);
+    manualMatchingKeys.delete(key)
   }
 }
 
 const startScan = async () => {
   await runWithStatus('正在扫描目录并匹配 Bangumi...', async () => {
     if (roots.value.length === 0) {
-      activeRoot.value = await requestLibraryRoot();
-      roots.value = await getLibraryRoots();
+      activeRoot.value = await requestLibraryRoot()
+      roots.value = await getLibraryRoots()
     }
 
-    const totals = { added: 0, updated: 0, missing: 0 };
+    const totals = { added: 0, updated: 0, missing: 0 }
     for (const root of roots.value) {
-      const result = await scanLibraryRoot(root);
-      totals.added += result.added;
-      totals.updated += result.updated;
-      totals.missing += result.missing;
+      const result = await scanLibraryRoot(root)
+      totals.added += result.added
+      totals.updated += result.updated
+      totals.missing += result.missing
     }
     scanSummary.value = {
       added: totals.added,
       updated: totals.updated,
       missing: totals.missing,
-    };
+    }
 
-    const candidates = await createMatch();
+    const candidates = await createMatch()
     for (const [key, values] of candidates.entries()) {
-      const topValues = values.slice(0, 4);
-      candidateMap[key] = topValues;
+      const topValues = values.slice(0, 4)
+      candidateMap[key] = topValues
       if (topValues[0]) {
-        selectedCandidateIds[key] = topValues[0].id;
-        await loadEpisodePreview(key, topValues[0].id);
+        selectedCandidateIds[key] = topValues[0].id
+        await loadEpisodePreview(key, topValues[0].id)
       }
     }
 
-    await refreshMatches();
-    statusText.value = '扫描完成，请确认匹配结果';
-  });
-};
+    await refreshMatches()
+    statusText.value = '扫描完成，请确认匹配结果'
+  })
+}
 
 const confirmAll = () => {
   runWithStatus('正在写入全部已选匹配...', async () => {
     for (const group of reviewGroups.value) {
-      if (!group.candidates.length || !group.selectedId) continue;
-      await confirmGroup(group.key, group.selectedId, false);
+      if (!group.candidates.length || !group.selectedId) continue
+      await confirmGroup(group.key, group.selectedId, false)
     }
-    await refreshMatches();
-  });
-};
+    await refreshMatches()
+  })
+}
 
 const cancelAll = () => {
   runWithStatus('正在取消全部待确认结果...', async () => {
-    await Promise.all(reviewGroups.value.map((group) => matchAPI.delete(group.key)));
-    await refreshMatches();
-  });
-};
+    await Promise.all(reviewGroups.value.map((group) => matchAPI.delete(group.key)))
+    await refreshMatches()
+  })
+}
 
-const isConfirming = (key: string) => confirmingKeys.has(key);
+const isConfirming = (key: string) => confirmingKeys.has(key)
 
 const confirmGroup = async (key: string, bangumiId: number, refreshAfter = true) => {
-  if (!bangumiId || confirmingKeys.has(key)) return;
+  if (!bangumiId || confirmingKeys.has(key)) return
 
-  confirmingKeys.add(key);
-  const claimed = await claimMatchForImport(key, bangumiId);
+  confirmingKeys.add(key)
+  const claimed = await claimMatchForImport(key, bangumiId)
   if (!claimed) {
-    confirmingKeys.delete(key);
-    if (refreshAfter) await refreshMatches();
-    return;
+    confirmingKeys.delete(key)
+    if (refreshAfter) await refreshMatches()
+    return
   }
 
   try {
-    await saveMatchResult(key);
+    await saveMatchResult(key)
   } catch (error) {
-    await matchAPI.update(key, { status: 'idle' });
-    throw error;
+    await matchAPI.update(key, { status: 'idle' })
+    throw error
   } finally {
-    confirmingKeys.delete(key);
+    confirmingKeys.delete(key)
   }
-};
+}
 
 const confirmOne = (key: string, bangumiId: number) => {
   runWithStatus('正在写入匹配结果...', async () => {
-    await confirmGroup(key, bangumiId);
-    await refreshMatches();
-  });
-};
+    await confirmGroup(key, bangumiId)
+    await refreshMatches()
+  })
+}
 
 const removeItem = (key: string) => {
   runWithStatus('正在跳过该目录...', async () => {
-    await matchAPI.delete(key);
-    await refreshMatches();
-  });
-};
+    await matchAPI.delete(key)
+    await refreshMatches()
+  })
+}
 
 onMounted(async () => {
-  roots.value = await getLibraryRoots();
-  activeRoot.value = roots.value[0] ?? null;
-  await refreshMatches();
-  await restoreMatchProgress(matches.value);
-});
+  roots.value = await getLibraryRoots()
+  activeRoot.value = roots.value[0] ?? null
+  await refreshMatches()
+  await restoreMatchProgress(matches.value)
+})
 </script>
 
 <template>
@@ -502,7 +519,7 @@ onMounted(async () => {
               <span>导入 JSON</span>
             </button>
           </div>
-          
+
           <div class="path-display">
             <HardDrive :size="16" class="icon-muted" />
             <code class="path-text">{{ targetFolderPath }}</code>
@@ -530,9 +547,12 @@ onMounted(async () => {
         </section>
 
         <section class="scan-info">
-          <p class="info-text">Euphonium 会按目录聚合本地视频，自动生成 Bangumi 候选，并在确认后写入本地库。</p>
+          <p class="info-text">
+            Euphonium 会按目录聚合本地视频，自动生成 Bangumi 候选，并在确认后写入本地库。
+          </p>
           <p v-if="scanSummary" class="info-text">
-            新增 {{ scanSummary.added }}，更新 {{ scanSummary.updated }}，缺失 {{ scanSummary.missing }}
+            新增 {{ scanSummary.added }}，更新 {{ scanSummary.updated }}，缺失
+            {{ scanSummary.missing }}
           </p>
           <p v-if="statusText" class="info-text">{{ statusText }}</p>
           <p v-if="errorText" class="error-text">{{ errorText }}</p>
@@ -553,7 +573,11 @@ onMounted(async () => {
               <template #icon><Check :size="16" /></template>
               <span>{{ isBusy ? '处理中...' : '一键确认' }}</span>
             </BaseButton>
-            <BaseButton variant="secondary" :disabled="isBusy || reviewGroups.length === 0" @click="cancelAll">
+            <BaseButton
+              variant="secondary"
+              :disabled="isBusy || reviewGroups.length === 0"
+              @click="cancelAll"
+            >
               <template #icon><X :size="16" /></template>
               <span>一键取消</span>
             </BaseButton>
@@ -561,7 +585,12 @@ onMounted(async () => {
         </header>
 
         <div v-if="reviewGroups.length > 0" class="results-list">
-          <div v-for="item in reviewGroups" :key="item.key" class="result-card" :class="item.candidates.length ? 'matched' : 'unmatched'">
+          <div
+            v-for="item in reviewGroups"
+            :key="item.key"
+            class="result-card"
+            :class="item.candidates.length ? 'matched' : 'unmatched'"
+          >
             <!-- Matched Item -->
             <template v-if="item.candidates.length">
               <div v-if="posterImage(item)" class="poster-backdrop" aria-hidden="true">
@@ -580,10 +609,16 @@ onMounted(async () => {
                   <span v-if="item.search_keyword">搜索词：{{ item.search_keyword }}</span>
                   <span>季：{{ item.season }}</span>
                 </div>
-                <p v-if="item.warnings?.length" class="parse-warning">{{ item.warnings.join('；') }}</p>
+                <p v-if="item.warnings?.length" class="parse-warning">
+                  {{ item.warnings.join('；') }}
+                </p>
 
                 <div class="options-grid">
-                  <label v-for="candidate in item.candidates.slice(0, 4)" :key="candidate.id" class="option-label">
+                  <label
+                    v-for="candidate in item.candidates.slice(0, 4)"
+                    :key="candidate.id"
+                    class="option-label"
+                  >
                     <input
                       v-model="selectedCandidateIds[item.key]"
                       type="radio"
@@ -596,62 +631,18 @@ onMounted(async () => {
                   </label>
                 </div>
 
-                <div class="file-mapping-card">
-                  <div class="mapping-card-header">
-                    <span>剧集匹配</span>
-                    <small>按文件选择目标集数，剧集名称会随选择更新</small>
-                  </div>
-
-                  <div class="offset-tools">
-                    <span class="offset-label">批量偏移</span>
-                    <button class="offset-btn" @click="adjustOffset(item.key, -1)">-1</button>
-                    <input
-                      v-model.number="offsetInputs[item.key]"
-                      class="offset-input"
-                      type="number"
-                      step="1"
-                    />
-                    <button class="offset-btn" @click="adjustOffset(item.key, 1)">+1</button>
-                    <button class="offset-apply" @click="applyEpisodeOffset(item.key)">应用</button>
-                    <button class="offset-reset" @click="resetEpisodeMapping(item.key)">重置解析</button>
-                  </div>
-
-                  <div class="file-match-list">
-                    <div class="file-match-row header">
-                      <span>文件</span>
-                      <span>解析</span>
-                      <span>选择集数</span>
-                      <span>剧集名称</span>
-                    </div>
-                    <div
-                      v-for="row in fileMatchRows(item)"
-                      :key="row.fileId"
-                      class="file-match-row"
-                    >
-                      <div class="file-name-cell" :title="row.fileName">
-                        <FileCode :size="14" />
-                        <span :title="row.fileName">{{ row.fileName }}</span>
-                      </div>
-                      <span class="parsed-episode">
-                        {{ row.parsedEpisode ? `第 ${row.parsedEpisode} 集` : '未解析' }}
-                      </span>
-                      <input
-                        class="episode-number-input"
-                        type="number"
-                        min="0"
-                        step="1"
-                        :value="row.selectedEpisode"
-                        @change="onEpisodeSelect(item.key, row.fileId, $event)"
-                        @keyup.enter="onEpisodeSelect(item.key, row.fileId, $event)"
-                      />
-                      <div class="episode-title-inline">
-                        <span :title="episodeTitle(item, row.selectedEpisode)">
-                          {{ episodeTitle(item, row.selectedEpisode) || '未选择剧集' }}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <EpisodeFileMappingEditor
+                  :rows="fileMatchRows(item)"
+                  :episode-options="episodeOptions(item)"
+                  :offset-value="offsetInputs[item.key] ?? 0"
+                  @update:offset-value="offsetInputs[item.key] = $event"
+                  @update-file-episode="
+                    (fileId, episode) => updateFileEpisode(item.key, fileId, episode)
+                  "
+                  @adjust-offset="(delta) => adjustOffset(item.key, delta)"
+                  @apply-offset="applyEpisodeOffset(item.key)"
+                  @reset-mapping="resetEpisodeMapping(item.key)"
+                />
 
                 <div v-if="isManualMatchOpen(item.key)" class="manual-match-panel">
                   <input
@@ -669,7 +660,11 @@ onMounted(async () => {
                     <template #icon><Search :size="14" /></template>
                     {{ isManualMatching(item.key) ? '匹配中...' : '匹配' }}
                   </BaseButton>
-                  <BaseButton variant="ghost" :disabled="isManualMatching(item.key)" @click="closeManualMatch(item.key)">
+                  <BaseButton
+                    variant="ghost"
+                    :disabled="isManualMatching(item.key)"
+                    @click="closeManualMatch(item.key)"
+                  >
                     取消
                   </BaseButton>
                   <p v-if="manualMatchErrors[item.key]" class="manual-match-error">
@@ -718,7 +713,9 @@ onMounted(async () => {
                   <span v-if="item.search_keyword">搜索词：{{ item.search_keyword }}</span>
                   <span>季：{{ item.season }}</span>
                 </div>
-                <p v-if="item.warnings?.length" class="parse-warning">{{ item.warnings.join('；') }}</p>
+                <p v-if="item.warnings?.length" class="parse-warning">
+                  {{ item.warnings.join('；') }}
+                </p>
                 <div v-if="isManualMatchOpen(item.key)" class="manual-match-panel">
                   <input
                     v-model="manualKeywordInputs[item.key]"
@@ -735,7 +732,11 @@ onMounted(async () => {
                     <template #icon><Search :size="14" /></template>
                     {{ isManualMatching(item.key) ? '匹配中...' : '匹配' }}
                   </BaseButton>
-                  <BaseButton variant="ghost" :disabled="isManualMatching(item.key)" @click="closeManualMatch(item.key)">
+                  <BaseButton
+                    variant="ghost"
+                    :disabled="isManualMatching(item.key)"
+                    @click="closeManualMatch(item.key)"
+                  >
                     取消
                   </BaseButton>
                   <p v-if="manualMatchErrors[item.key]" class="manual-match-error">
@@ -1025,7 +1026,7 @@ onMounted(async () => {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, var(--surface) 88%);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, var(--surface) 88%);
 }
 
 .item-content {
@@ -1348,7 +1349,7 @@ onMounted(async () => {
   background-color: var(--surface);
   color: var(--primary);
   border-radius: 50%;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
 .empty-text {
@@ -1364,18 +1365,79 @@ onMounted(async () => {
   line-height: 1.6;
 }
 
-.icon-muted { opacity: 0.5; }
-.icon-primary { color: var(--primary); }
-.icon-tertiary { color: #8e44ad; }
-.edit-btn { color: var(--primary); }
-.item-content.full { width: 100%; }
-.badge-status { background-color: var(--surface-low); padding: 4px 12px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
-.options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.option-label { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--outline-variant); border-radius: 12px; cursor: pointer; font-size: 14px; }
-.text-link { color: var(--primary); font-weight: 600; font-size: 13px; text-transform: uppercase; }
-.flex-row { display: flex; align-items: center; gap: 12px; }
-.gap-16 { gap: 16px; }
-.flex-between { display: flex; justify-content: space-between; align-items: center; }
-.error-icon { width: 44px; height: 44px; background-color: var(--error-container); color: var(--error); border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-.error-text { color: var(--error); font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-top: 4px; }
+.icon-muted {
+  opacity: 0.5;
+}
+.icon-primary {
+  color: var(--primary);
+}
+.icon-tertiary {
+  color: #8e44ad;
+}
+.edit-btn {
+  color: var(--primary);
+}
+.item-content.full {
+  width: 100%;
+}
+.badge-status {
+  background-color: var(--surface-low);
+  padding: 4px 12px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.option-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.text-link {
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+.flex-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gap-16 {
+  gap: 16px;
+}
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.error-icon {
+  width: 44px;
+  height: 44px;
+  background-color: var(--error-container);
+  color: var(--error);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.error-text {
+  color: var(--error);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
 </style>
