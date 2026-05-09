@@ -1,7 +1,9 @@
 import { parseVideoFileName } from '@/utils/fileNameParser'
 import { getSearchResults } from './bangumi'
+import { isExtraDirectoryName } from './fileSystem'
 import { fileAPI, matchAPI } from './storage'
 import type { BangumiAnime } from '@/models/Bangumi'
+import type { VideoFile } from '@/models/File'
 
 const MANUAL_NO_MATCH_WARNING = '无法匹配，无法关联'
 
@@ -21,6 +23,21 @@ function parentDirectoryPath(path: string) {
 
 function lastPathSegment(path: string) {
   return pathSegments(path).at(-1) ?? ''
+}
+
+function parentPathForMatch(file: VideoFile, isExtra: boolean) {
+  if (!isExtra) return file.parent_path ?? ''
+
+  const groupPath = file.extra_group_path ?? file.parent_path ?? ''
+  const groupParent = parentDirectoryPath(groupPath)
+  if (groupParent) return groupParent
+
+  const groupName = lastPathSegment(groupPath)
+  if (groupPath && file.parent_path === groupPath && !isExtraDirectoryName(groupName)) {
+    return groupPath
+  }
+
+  return ''
 }
 
 export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
@@ -47,9 +64,7 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
     const parsed = parseVideoFileName(file.name)
     const rootId = file.root_id ?? 'main'
     const isExtra = file.media_kind === 'extra'
-    const parentPath = isExtra
-      ? parentDirectoryPath(file.extra_group_path ?? file.parent_path ?? '')
-      : (file.parent_path ?? '')
+    const parentPath = parentPathForMatch(file, isExtra)
     const folderName = lastPathSegment(parentPath) || parsed.title || file.extra_label || file.name
     const title = isExtra ? folderName : parsed.title || folderName
     const folderKey = `${rootId}:${parentPath || '/'}`

@@ -141,17 +141,38 @@ const EXTRA_FOLDER_PATTERNS = [
   /^extras?$/i,
   /^bonus$/i,
   /^menu$/i,
-  /特典|特别|特別|映像特典|番外|花絮|预告|預告|无字幕|無字幕|菜单/i,
+  /^特典(?:映像|视频|視頻)?$/i,
+  /^映像特典$/i,
+  /^特别(?:篇|话|話|映像|视频|視頻)?$/i,
+  /^特別(?:篇|话|話|映像|视频|視頻)?$/i,
+  /^番外(?:篇|话|話)?$/i,
+  /^花絮$/i,
+  /^预告(?:片)?$/i,
+  /^預告(?:片)?$/i,
+  /^无字幕(?:op|ed)?\d*$/i,
+  /^無字幕(?:op|ed)?\d*$/i,
+  /^菜单$/i,
 ]
 
-function isExtraDirectoryName(name: string) {
+export function isExtraDirectoryName(name: string) {
   const normalized = name.trim()
   return EXTRA_FOLDER_PATTERNS.some((pattern) => pattern.test(normalized))
 }
 
-async function isVideoFile(fileHandle: FileSystemFileHandle) {
-  const name = fileHandle.name
+function isVideoFileName(name: string) {
   return VIDEO_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext))
+}
+
+async function isVideoFile(fileHandle: FileSystemFileHandle) {
+  return isVideoFileName(fileHandle.name)
+}
+
+function hasDirectVideoFile(entries: Array<[string, FileSystemHandle]>) {
+  return entries.some(([_, handle]) => handle.kind === 'file' && isVideoFileName(handle.name))
+}
+
+function canStartExtraContext(relativePath: string, hasDirectVideoFiles: boolean) {
+  return relativePath !== '' || hasDirectVideoFiles
 }
 
 async function scanDirectory(
@@ -163,13 +184,7 @@ async function scanDirectory(
   const entries: Array<[string, FileSystemHandle]> = []
   for await (const entry of dirHandle.entries()) entries.push(entry)
 
-  const hasDirectVideoFiles =
-    !extraContext &&
-    entries.some(
-      ([_, handle]) =>
-        handle.kind === 'file' &&
-        VIDEO_EXTENSIONS.some((ext) => handle.name.toLowerCase().endsWith(ext)),
-    )
+  const hasDirectVideoFiles = !extraContext && hasDirectVideoFile(entries)
 
   for (const [name, handle] of entries) {
     const currentPath = relativePath ? `${relativePath}/${name}` : name
@@ -187,9 +202,13 @@ async function scanDirectory(
         })
       }
     } else if (handle.kind === 'directory') {
+      const startsExtraContext =
+        !extraContext &&
+        canStartExtraContext(relativePath, hasDirectVideoFiles) &&
+        (isExtraDirectoryName(name) || hasDirectVideoFiles)
       const nextExtraContext =
         extraContext ??
-        (isExtraDirectoryName(name) || hasDirectVideoFiles
+        (startsExtraContext
           ? {
               label: name,
               groupPath: currentPath,
