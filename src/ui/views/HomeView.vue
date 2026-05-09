@@ -15,6 +15,7 @@ import {
 import type { Anime, Episode } from '@/models/Anime'
 import { loadLibraryFilterOptions, rememberAnimeFilterOptionsBulk } from '@/services/filterOptions'
 import { animeAPI, collectionAPI, episodeAPI } from '@/services/storage'
+import ConfirmDialog from '@/ui/components/ConfirmDialog.vue'
 import { rebuildNavItems, type CollectionItem, uiState } from '@/ui/stores/uiState'
 
 const router = useRouter()
@@ -29,6 +30,12 @@ const selectedCollectionIds = ref<Set<string>>(new Set())
 const selectedCollectionAddIds = ref<Set<string>>(new Set())
 const isCollectionSelectionMode = ref(false)
 const isCollectionAddMode = ref(false)
+const confirmDialogOpen = ref(false)
+const confirmDialogTitle = ref('')
+const confirmDialogMessage = ref('')
+const confirmDialogConfirmText = ref('确认')
+const confirmDialogLoading = ref(false)
+const pendingConfirmAction = ref<(() => Promise<void>) | null>(null)
 
 const years = computed(() => ['all', ...filterOptionCache.value.years])
 const genres = computed(() => ['all', ...filterOptionCache.value.tags])
@@ -363,17 +370,52 @@ const restoreFromTrash = async (item: CollectionItem) => {
   await refreshAnimes()
 }
 
-const markTrashDeleted = async (item: CollectionItem) => {
-  const ok = window.confirm(
-    `确定要从回收站移除「${item.title}」吗？数据仍会以软删除状态保留在 IndexedDB。`,
-  )
-  if (!ok) return
+function openConfirmDialog(options: {
+  title: string
+  message: string
+  confirmText?: string
+  action: () => Promise<void>
+}) {
+  confirmDialogTitle.value = options.title
+  confirmDialogMessage.value = options.message
+  confirmDialogConfirmText.value = options.confirmText ?? '确认'
+  pendingConfirmAction.value = options.action
+  confirmDialogOpen.value = true
+}
 
-  await animeAPI.markTrashDeleted(String(item.id))
-  if (uiState.selectedMedia?.id === item.id) uiState.selectedMedia = null
-  selectedTrashIds.value.delete(String(item.id))
-  selectedTrashIds.value = new Set(selectedTrashIds.value)
-  await refreshAnimes()
+function cancelConfirmDialog() {
+  if (confirmDialogLoading.value) return
+  confirmDialogOpen.value = false
+  pendingConfirmAction.value = null
+}
+
+async function confirmDialogAction() {
+  const action = pendingConfirmAction.value
+  if (!action || confirmDialogLoading.value) return
+
+  confirmDialogLoading.value = true
+  try {
+    await action()
+    confirmDialogOpen.value = false
+    pendingConfirmAction.value = null
+  } finally {
+    confirmDialogLoading.value = false
+  }
+}
+
+const markTrashDeleted = (item: CollectionItem) => {
+  openConfirmDialog({
+    title: '从回收站移除',
+    message: `确定要从回收站移除「${item.title}」吗？数据仍会以软删除状态保留在 IndexedDB。`,
+    confirmText: '删除',
+    action: async () => {
+      await animeAPI.markTrashDeleted(String(item.id))
+      if (uiState.selectedMedia?.id === item.id) uiState.selectedMedia = null
+      selectedTrashIds.value.delete(String(item.id))
+      selectedTrashIds.value = new Set(selectedTrashIds.value)
+      await refreshAnimes()
+    },
+  })
 }
 
 const toggleSelectAllTrash = () => {
@@ -397,16 +439,18 @@ const markSelectedTrashDeleted = async () => {
   const ids = Array.from(selectedTrashIds.value)
   if (ids.length === 0) return
 
-  const ok = window.confirm(
-    `确定要从回收站移除选中的 ${ids.length} 个条目吗？数据仍会以软删除状态保留在 IndexedDB。`,
-  )
-  if (!ok) return
-
-  await animeAPI.markTrashDeletedBulk(ids)
-  setTrashSelection([])
-  if (uiState.selectedMedia && ids.includes(String(uiState.selectedMedia.id)))
-    uiState.selectedMedia = null
-  await refreshAnimes()
+  openConfirmDialog({
+    title: '批量移除条目',
+    message: `确定要从回收站移除选中的 ${ids.length} 个条目吗？数据仍会以软删除状态保留在 IndexedDB。`,
+    confirmText: '删除',
+    action: async () => {
+      await animeAPI.markTrashDeletedBulk(ids)
+      setTrashSelection([])
+      if (uiState.selectedMedia && ids.includes(String(uiState.selectedMedia.id)))
+        uiState.selectedMedia = null
+      await refreshAnimes()
+    },
+  })
 }
 
 const beginCollectionAddMode = () => {
@@ -733,6 +777,17 @@ onMounted(async () => {
       </button>
       <RouterLink v-else-if="!isTrashView" :to="{ name: 'import' }">前往导入</RouterLink>
     </div>
+
+    <ConfirmDialog
+      v-model="confirmDialogOpen"
+      :title="confirmDialogTitle"
+      :message="confirmDialogMessage"
+      :confirm-text="confirmDialogConfirmText"
+      tone="danger"
+      :loading="confirmDialogLoading"
+      @cancel="cancelConfirmDialog"
+      @confirm="confirmDialogAction"
+    />
   </div>
 </template>
 
@@ -849,7 +904,8 @@ onMounted(async () => {
 
 .bento-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, 200px);
+  justify-content: start;
   gap: 24px;
 }
 

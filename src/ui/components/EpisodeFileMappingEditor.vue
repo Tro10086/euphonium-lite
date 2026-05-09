@@ -32,6 +32,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:offsetValue': [value: number]
   updateFileEpisode: [fileId: string, episode: number]
+  moveFileToExtra: [fileId: string]
   adjustOffset: [delta: number]
   applyOffset: []
   resetMapping: []
@@ -55,54 +56,60 @@ function onOffsetInput(event: Event) {
 
 <template>
   <div class="file-mapping-card" :class="{ compact }">
-    <div class="mapping-card-header">
-      <span>{{ title }}</span>
-      <small>{{ description }}</small>
-    </div>
-
-    <div class="offset-tools">
-      <span class="offset-label">批量偏移</span>
-      <button class="offset-btn" @click="emit('adjustOffset', -1)">-1</button>
-      <input
-        class="offset-input"
-        type="number"
-        step="1"
-        :value="offsetValue"
-        @input="onOffsetInput"
-      />
-      <button class="offset-btn" @click="emit('adjustOffset', 1)">+1</button>
-      <button class="offset-apply" @click="emit('applyOffset')">应用</button>
-      <button class="offset-reset" @click="emit('resetMapping')">重置解析</button>
-    </div>
-
-    <div class="file-match-list">
-      <div class="file-match-row header">
-        <span>文件</span>
-        <span>解析</span>
-        <span>选择集数</span>
-        <span>剧集名称</span>
+    <div class="file-mapping-scroll">
+      <div class="mapping-card-header">
+        <span>{{ title }}</span>
+        <small>{{ description }}</small>
       </div>
-      <div v-for="row in rows" :key="row.fileId" class="file-match-row">
-        <div class="file-name-cell" :title="row.fileName">
-          <FileCode :size="14" />
-          <span :title="row.fileName">{{ row.fileName }}</span>
-        </div>
-        <span class="parsed-episode">
-          {{ row.parsedEpisode ? `第 ${row.parsedEpisode} 集` : '未解析' }}
-        </span>
+
+      <div class="offset-tools">
+        <span class="offset-label">批量偏移</span>
+        <button class="offset-btn" @click="emit('adjustOffset', -1)">-1</button>
         <input
-          class="episode-number-input"
+          class="offset-input"
           type="number"
-          min="0"
           step="1"
-          :value="row.selectedEpisode"
-          @change="onEpisodeSelect(row.fileId, $event)"
-          @keyup.enter="onEpisodeSelect(row.fileId, $event)"
+          :value="offsetValue"
+          @input="onOffsetInput"
         />
-        <div class="episode-title-inline">
-          <span :title="episodeTitle(row.selectedEpisode)">
-            {{ episodeTitle(row.selectedEpisode) || '未选择剧集' }}
+        <button class="offset-btn" @click="emit('adjustOffset', 1)">+1</button>
+        <button class="offset-apply" @click="emit('applyOffset')">应用</button>
+        <button class="offset-reset" @click="emit('resetMapping')">重置解析</button>
+      </div>
+
+      <div class="file-match-list">
+        <div class="file-match-row header">
+          <span>文件</span>
+          <span>解析</span>
+          <span>选择集数</span>
+          <span>剧集名称</span>
+          <span>类型</span>
+        </div>
+        <div v-for="row in rows" :key="row.fileId" class="file-match-row">
+          <div class="file-name-cell" :title="row.fileName">
+            <FileCode :size="14" />
+            <span :title="row.fileName">{{ row.fileName }}</span>
+          </div>
+          <span class="parsed-episode">
+            {{ row.parsedEpisode ? `第 ${row.parsedEpisode} 集` : '未解析' }}
           </span>
+          <input
+            class="episode-number-input"
+            type="number"
+            min="0"
+            step="1"
+            :value="row.selectedEpisode"
+            @change="onEpisodeSelect(row.fileId, $event)"
+            @keyup.enter="onEpisodeSelect(row.fileId, $event)"
+          />
+          <div class="episode-title-inline">
+            <span :title="episodeTitle(row.selectedEpisode)">
+              {{ episodeTitle(row.selectedEpisode) || '未选择剧集' }}
+            </span>
+          </div>
+          <button class="mapping-kind-btn" @click="emit('moveFileToExtra', row.fileId)">
+            设为附加
+          </button>
         </div>
       </div>
     </div>
@@ -113,7 +120,6 @@ function onOffsetInput(event: Event) {
 .file-mapping-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   margin-bottom: 20px;
   padding: 16px;
   overflow-x: auto;
@@ -122,9 +128,20 @@ function onOffsetInput(event: Event) {
   background-color: color-mix(in srgb, var(--surface) 86%, transparent);
 }
 
+.file-mapping-scroll {
+  min-width: 1040px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .file-mapping-card.compact {
   max-height: min(64vh, 620px);
   margin-bottom: 0;
+}
+
+.file-mapping-card.compact .file-mapping-scroll {
+  min-width: 880px;
 }
 
 .mapping-card-header {
@@ -201,16 +218,11 @@ function onOffsetInput(event: Event) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 920px;
-}
-
-.file-mapping-card.compact .file-match-list {
-  min-width: 760px;
 }
 
 .file-match-row {
   display: grid;
-  grid-template-columns: minmax(520px, 2.8fr) minmax(72px, max-content) 72px minmax(160px, 0.9fr);
+  grid-template-columns: minmax(500px, 2.6fr) minmax(72px, max-content) 72px minmax(160px, 0.9fr) 92px;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
@@ -221,7 +233,7 @@ function onOffsetInput(event: Event) {
 }
 
 .file-mapping-card.compact .file-match-row {
-  grid-template-columns: minmax(360px, 2fr) minmax(72px, max-content) 72px minmax(140px, 1fr);
+  grid-template-columns: minmax(340px, 2fr) minmax(72px, max-content) 72px minmax(140px, 1fr) 92px;
 }
 
 .file-match-row.header {
@@ -268,6 +280,24 @@ function onOffsetInput(event: Event) {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mapping-kind-btn {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface-low);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.mapping-kind-btn:hover {
+  border-color: var(--primary-container);
+  color: var(--primary);
+  background-color: var(--primary-light);
 }
 
 @media (max-width: 760px) {

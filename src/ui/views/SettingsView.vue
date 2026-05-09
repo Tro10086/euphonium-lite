@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { uiState } from '@/ui/stores/uiState';
 import { Palette, Code, Database, Lightbulb, Moon, Settings2, Check, Download, Upload, Play, Edit2, Trash2 } from 'lucide-vue-next';
 import BaseButton from '@/ui/components/BaseButton.vue';
+import ConfirmDialog from '@/ui/components/ConfirmDialog.vue';
 import { debugAPI } from '@/services/storage';
 import { downloadBackupJson, formatImportResult, importBackupJsonFile, reloadAfterImport } from '@/ui/utils/backupTransfer';
 import { parseDetailedVideoFileName } from '@/utils/fileNameParser';
@@ -34,6 +35,7 @@ const dataError = ref('');
 const debugMessage = ref('');
 const debugError = ref('');
 const isClearingDebugData = ref(false);
+const clearDataDialogOpen = ref(false);
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
@@ -72,8 +74,13 @@ const handleExportBackup = async () => {
   }
 };
 
+const openClearIndexedDBDialog = () => {
+  if (isClearingDebugData.value) return;
+  clearDataDialogOpen.value = true;
+};
+
 const clearIndexedDB = async () => {
-  if (!window.confirm('确定要清空本机 IndexedDB 数据吗？此操作会删除馆藏、扫描记录、匹配记录和笔记附件。')) return;
+  if (isClearingDebugData.value) return;
 
   debugMessage.value = '';
   debugError.value = '';
@@ -329,7 +336,7 @@ const runTest = () => {
                 <h3 class="text-error">清空 IndexedDB</h3>
                 <p>删除主库 EuphoniumLite；如果本机存在 EuphoniumLiteNotes，也会一起删除。完成后自动重新加载。</p>
               </div>
-              <button class="btn-error-ghost sm" :disabled="isClearingDebugData" @click="clearIndexedDB">
+              <button class="btn-error-ghost sm" :disabled="isClearingDebugData" @click="openClearIndexedDBDialog">
                 <Trash2 :size="16" />
                 <span>{{ isClearingDebugData ? '正在清空' : '清空 IndexedDB' }}</span>
               </button>
@@ -340,6 +347,16 @@ const runTest = () => {
         </section>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-model="clearDataDialogOpen"
+      title="清空 IndexedDB"
+      message="确定要清空本机 IndexedDB 数据吗？此操作会删除馆藏、扫描记录、匹配记录和笔记附件。"
+      confirm-text="清空 IndexedDB"
+      tone="danger"
+      :loading="isClearingDebugData"
+      @confirm="clearIndexedDB"
+    />
   </div>
 </template>
 
@@ -359,6 +376,10 @@ const runTest = () => {
 @media (max-width: 900px) {
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .settings-nav {
+    display: none;
   }
 }
 

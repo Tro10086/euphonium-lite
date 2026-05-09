@@ -2100,47 +2100,46 @@ onUnmounted(() => {
 
 @media (max-width: 980px) {
   .notes-page {
-    height: auto;
-    min-height: calc(100vh - 108px);
-    overflow: visible;
+    height: calc(100vh - 108px);
+    overflow: hidden;
   }
 
   .notes-view {
-    grid-template-columns: 1fr;
-    height: auto;
+    grid-template-columns: 280px minmax(0, 1fr);
+    height: 100%;
   }
 
   .anime-column {
-    height: auto;
-    min-height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--outline-variant);
-    padding-right: 0;
-    padding-bottom: 18px;
-    overflow: visible;
+    height: 100%;
+    min-height: 0;
+    border-right: 1px solid var(--outline-variant);
+    border-bottom: 0;
+    padding-right: 20px;
+    padding-bottom: 0;
+    overflow: hidden;
   }
 
   .anime-search {
-    position: static;
+    position: relative;
   }
 
   .anime-list {
-    max-height: none;
-    flex: 0 0 auto;
-    flex-direction: row;
-    overflow-x: auto;
-    padding-bottom: 4px;
+    flex: 1;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-bottom: 0;
   }
 
   .notes-workspace {
-    height: auto;
+    height: 100%;
     min-height: 0;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .notes-list-area {
-    overflow: visible;
-    padding-right: 0;
+    overflow-y: auto;
+    padding-right: 4px;
   }
 
   .editor-layout {
@@ -2148,7 +2147,7 @@ onUnmounted(() => {
   }
 
   .anime-item {
-    flex: 0 0 220px;
+    flex: 0 0 auto;
   }
 
   .notes-toolbar,

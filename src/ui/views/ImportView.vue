@@ -50,6 +50,7 @@ const manualMatchOpenKeys = reactive(new Set<string>())
 const manualMatchingKeys = reactive(new Set<string>())
 const manualKeywordInputs = reactive<Record<string, string>>({})
 const manualMatchErrors = reactive<Record<string, string>>({})
+const extraEpisodeInputs = reactive<Record<string, number>>({})
 
 const targetFolderPath = computed(() => {
   const [firstRoot] = roots.value
@@ -219,6 +220,7 @@ function extraFileRows(item: { extraFileIds: string[] }) {
         fileId,
         fileName: file?.name ?? fileId,
         label: file ? defaultExtraLabel(file) : '附加视频',
+        parsedEpisode: parsedEpisodeForFile(fileId),
       }
     })
     .sort((a, b) => fileSortKey(a.fileId).localeCompare(fileSortKey(b.fileId)))
@@ -257,6 +259,15 @@ function parsedEpisodeForFile(fileId: string) {
   return parseVideoFileName(file.name).episode || 0
 }
 
+function extraTargetEpisode(fileId: string) {
+  if (extraEpisodeInputs[fileId] !== undefined) return extraEpisodeInputs[fileId]
+  return parsedEpisodeForFile(fileId)
+}
+
+function handleExtraEpisodeChange(fileId: string, event: Event) {
+  extraEpisodeInputs[fileId] = Number((event.target as HTMLInputElement).value)
+}
+
 function fileMatchRows(item: {
   draft_mappings: Record<number, string[]>
   unmappedFileIds: string[]
@@ -282,7 +293,7 @@ function fileMatchRows(item: {
   )
 }
 
-function buildMappingsWithFileEpisode(match: MatchRecord, fileId: string, targetEp: number) {
+function removeFileFromEpisodeBuckets(match: MatchRecord, fileId: string) {
   const mappings: Record<number, string[]> = {}
   for (const [ep, fileIds] of Object.entries(match.draft_mappings ?? {})) {
     const filtered = fileIds.filter((id) => id !== fileId)
@@ -290,6 +301,12 @@ function buildMappingsWithFileEpisode(match: MatchRecord, fileId: string, target
   }
 
   const unmappedFileIds = (match.unmapped_file_ids ?? []).filter((id) => id !== fileId)
+
+  return { mappings, unmappedFileIds }
+}
+
+function buildMappingsWithFileEpisode(match: MatchRecord, fileId: string, targetEp: number) {
+  const { mappings, unmappedFileIds } = removeFileFromEpisodeBuckets(match, fileId)
   if (targetEp > 0)
     mappings[targetEp] = Array.from(new Set([...(mappings[targetEp] ?? []), fileId]))
   else unmappedFileIds.push(fileId)
@@ -309,6 +326,62 @@ async function updateFileEpisode(key: string, fileId: string, value: string | nu
     unmapped_file_ids: unmappedFileIds,
   })
 
+  await refreshMatches()
+}
+
+async function moveEpisodeFileToExtra(key: string, fileId: string) {
+  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key)
+  const file = fileMap[fileId]
+  if (!match || !file) return
+
+  const { mappings, unmappedFileIds } = removeFileFromEpisodeBuckets(match, fileId)
+  const extraFileIds = Array.from(new Set([...(match.extra_file_ids ?? []), fileId]))
+  const updatedFile: VideoFile = {
+    ...file,
+    media_kind: 'extra',
+    ep_id: undefined,
+    extra_label: defaultExtraLabel(file),
+    extra_group_path: file.extra_group_path ?? file.parent_path,
+  }
+
+  await Promise.all([
+    matchAPI.update(key, {
+      draft_mappings: mappings,
+      unmapped_file_ids: Array.from(new Set(unmappedFileIds)),
+      extra_file_ids: extraFileIds,
+      warnings: (match.warnings ?? []).filter((warning) => !warning.includes(file.name)),
+    }),
+    fileAPI.update([updatedFile]),
+  ])
+  fileMap[fileId] = updatedFile
+  await refreshMatches()
+}
+
+async function moveExtraFileToEpisode(key: string, fileId: string) {
+  const match = matches.value.find((item) => (item.folder_key ?? item.keyword) === key)
+  const file = fileMap[fileId]
+  if (!match || !file) return
+
+  const targetEp = Number(extraTargetEpisode(fileId) || 0)
+  const { mappings, unmappedFileIds } = buildMappingsWithFileEpisode(match, fileId, targetEp)
+  const extraFileIds = (match.extra_file_ids ?? []).filter((id) => id !== fileId)
+  const updatedFile: VideoFile = {
+    ...file,
+    media_kind: 'episode',
+    extra_label: undefined,
+    extra_group_path: undefined,
+  }
+
+  await Promise.all([
+    matchAPI.update(key, {
+      draft_mappings: mappings,
+      unmapped_file_ids: unmappedFileIds,
+      extra_file_ids: extraFileIds,
+    }),
+    fileAPI.update([updatedFile]),
+  ])
+  delete extraEpisodeInputs[fileId]
+  fileMap[fileId] = updatedFile
   await refreshMatches()
 }
 
@@ -685,6 +758,7 @@ onMounted(async () => {
                   @update-file-episode="
                     (fileId, episode) => updateFileEpisode(item.key, fileId, episode)
                   "
+                  @move-file-to-extra="(fileId) => moveEpisodeFileToExtra(item.key, fileId)"
                   @adjust-offset="(delta) => adjustOffset(item.key, delta)"
                   @apply-offset="applyEpisodeOffset(item.key)"
                   @reset-mapping="resetEpisodeMapping(item.key)"
@@ -708,6 +782,22 @@ onMounted(async () => {
                         :value="row.label"
                         @change="handleExtraLabelChange(row.fileId, $event)"
                       />
+                      <input
+                        class="extra-episode-input"
+                        type="number"
+                        min="0"
+                        step="1"
+                        :title="row.parsedEpisode ? `解析为第 ${row.parsedEpisode} 集` : '未解析集数'"
+                        :value="extraTargetEpisode(row.fileId)"
+                        @input="handleExtraEpisodeChange(row.fileId, $event)"
+                        @keyup.enter="moveExtraFileToEpisode(item.key, row.fileId)"
+                      />
+                      <button
+                        class="extra-kind-btn"
+                        @click="moveExtraFileToEpisode(item.key, row.fileId)"
+                      >
+                        设为正片
+                      </button>
                     </div>
                   </div>
                 </section>
@@ -854,7 +944,7 @@ onMounted(async () => {
 }
 
 .import-view {
-  height: calc(100vh - 60px);
+  height: 100%;
   overflow-y: auto;
   background-color: var(--background);
 }
@@ -1339,7 +1429,7 @@ onMounted(async () => {
 
 .extra-file-row {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 180px;
+  grid-template-columns: minmax(240px, 1fr) 180px 72px 92px;
   gap: 12px;
   align-items: center;
 }
@@ -1364,6 +1454,36 @@ onMounted(async () => {
   color: var(--on-surface);
   font-size: 13px;
   font-weight: 700;
+}
+
+.extra-episode-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.extra-kind-btn {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.extra-kind-btn:hover {
+  border-color: var(--primary-container);
+  color: var(--primary);
+  background-color: var(--primary-light);
 }
 
 .manual-match-panel {
