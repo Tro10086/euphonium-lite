@@ -61,6 +61,8 @@ function extraVideoLabel(file: VideoFile) {
     '附加视频'
   )
 }
+type PlaybackMode = 'episode' | 'extra'
+type PlaybackTarget = { mode: PlaybackMode; index: number }
 const media = computed(() => {
   if (!realAnime.value) {
     return {
@@ -112,7 +114,8 @@ const episodeRows = computed(() =>
     .filter((ep) => ep.fileCount > 0),
 )
 const activeEpisodeIdx = ref(0)
-const activePlaybackMode = ref<'episode' | 'extra'>('episode')
+const activePlaybackMode = ref<PlaybackMode>('episode')
+const activeListTab = ref<PlaybackMode>('episode')
 const activeExtraIdx = ref(0)
 const rating = ref(0)
 const isFavorited = ref(false)
@@ -146,6 +149,8 @@ let shouldPlayOnReady = false
 let videoFrameCheckTimer: number | null = null
 let noteAutosaveTimer: number | null = null
 let isHydratingNote = false
+let progressAnimationFrame: number | null = null
+let isAdvancingAfterEnded = false
 
 const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null)
 const activeExtraFile = computed(() => extraFiles.value[activeExtraIdx.value] || null)
@@ -192,6 +197,9 @@ const progressPercent = computed(() => {
   if (!duration.value) return 0
   return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100))
 })
+const progressTrackStyle = computed(() => ({
+  '--progress-percent': `${progressPercent.value}%`,
+}))
 const volumePercent = computed(() => Math.min(100, Math.max(0, volume.value)))
 const formatPlaybackRate = (rate: number) => `${Number.isInteger(rate) ? rate.toFixed(1) : rate}x`
 const playbackRateLabel = computed(() => formatPlaybackRate(playbackRate.value))
@@ -201,14 +209,18 @@ const canPickSubtitle = computed(
 const activeEpisodeRowIndex = computed(() =>
   episodeRows.value.findIndex((ep) => ep.originalIndex === activeEpisodeIdx.value),
 )
-const canGoPrevEpisode = computed(
-  () => activePlaybackMode.value === 'episode' && activeEpisodeRowIndex.value > 0,
+const canGoPrevPlaybackItem = computed(() =>
+  activePlaybackMode.value === 'episode'
+    ? activeEpisodeRowIndex.value > 0
+    : activeExtraIdx.value > 0,
 )
-const canGoNextEpisode = computed(
-  () =>
-    activePlaybackMode.value === 'episode' &&
-    activeEpisodeRowIndex.value >= 0 &&
-    activeEpisodeRowIndex.value < episodeRows.value.length - 1,
+const canGoNextPlaybackItem = computed(() =>
+  activePlaybackMode.value === 'episode'
+    ? activeEpisodeRowIndex.value >= 0 && activeEpisodeRowIndex.value < episodeRows.value.length - 1
+    : activeExtraIdx.value >= 0 && activeExtraIdx.value < extraRows.value.length - 1,
+)
+const activeListEmptyText = computed(() =>
+  activeListTab.value === 'episode' ? '暂无可播放选集' : '暂无附加视频',
 )
 const isInfoPanelVisible = computed(() =>
   isCompactTheatre.value ? isInfoDrawerOpen.value : !isInfoPanelCollapsed.value,
@@ -346,6 +358,31 @@ const scheduleVideoFrameCheck = (delay = 1200) => {
     videoFrameCheckTimer = null
     checkRenderableVideoFrame()
   }, delay)
+}
+
+const cancelProgressAnimation = () => {
+  if (progressAnimationFrame === null) return
+  window.cancelAnimationFrame(progressAnimationFrame)
+  progressAnimationFrame = null
+}
+
+const syncPlaybackPosition = () => {
+  const video = videoRef.value
+  if (!video || isSeeking.value) return
+
+  currentTime.value = video.currentTime
+  if (Number.isFinite(video.duration)) duration.value = video.duration
+}
+
+const startProgressAnimation = () => {
+  cancelProgressAnimation()
+
+  const tick = () => {
+    syncPlaybackPosition()
+    progressAnimationFrame = window.requestAnimationFrame(tick)
+  }
+
+  progressAnimationFrame = window.requestAnimationFrame(tick)
 }
 
 const playWhenReadyIfRequested = async () => {
@@ -931,6 +968,7 @@ const setEpisode = async (index: number, options: { autoplay?: boolean } = { aut
   await saveProgress()
   await flushNoteAutosave()
   activePlaybackMode.value = 'episode'
+  activeListTab.value = 'episode'
   activeEpisodeIdx.value = index
   if (!hasRealData.value) {
     currentTime.value = 0
@@ -958,6 +996,7 @@ const setExtraFile = async (
   await saveProgress()
   await flushNoteAutosave()
   activePlaybackMode.value = 'extra'
+  activeListTab.value = 'extra'
   activeExtraIdx.value = index
   currentSourceIdx.value = 0
   currentTime.value = 0
@@ -967,19 +1006,35 @@ const setExtraFile = async (
   await loadNote()
 }
 
-const prevEpisode = () => {
+const getAdjacentPlaybackTarget = (direction: -1 | 1): PlaybackTarget | null => {
+  if (activePlaybackMode.value === 'extra') {
+    const targetIndex = activeExtraIdx.value + direction
+    return extraFiles.value[targetIndex] ? { mode: 'extra', index: targetIndex } : null
+  }
+
   const rowIndex = activeEpisodeRowIndex.value
-  const target = rowIndex > 0 ? episodeRows.value[rowIndex - 1] : null
-  if (target) void setEpisode(target.originalIndex)
+  const target = episodeRows.value[rowIndex + direction]
+  return target ? { mode: 'episode', index: target.originalIndex } : null
 }
 
-const nextEpisode = () => {
-  const rowIndex = activeEpisodeRowIndex.value
-  const target =
-    rowIndex >= 0 && rowIndex < episodeRows.value.length - 1
-      ? episodeRows.value[rowIndex + 1]
-      : null
-  if (target) void setEpisode(target.originalIndex)
+const setPlaybackTarget = (target: PlaybackTarget, options?: { autoplay?: boolean }) => {
+  return target.mode === 'extra'
+    ? setExtraFile(target.index, options)
+    : setEpisode(target.index, options)
+}
+
+const prevPlaybackItem = () => {
+  const target = getAdjacentPlaybackTarget(-1)
+  if (target) void setPlaybackTarget(target)
+}
+
+const nextPlaybackItem = () => {
+  const target = getAdjacentPlaybackTarget(1)
+  if (target) void setPlaybackTarget(target)
+}
+
+const selectListTab = (tab: PlaybackMode) => {
+  activeListTab.value = tab
 }
 
 const onProgressInput = (e: Event) => {
@@ -1044,6 +1099,7 @@ const loadTheatreData = async () => {
       filesByEpisode.value = {}
       extraFiles.value = []
       activePlaybackMode.value = 'episode'
+      activeListTab.value = 'episode'
       activeExtraIdx.value = 0
       activeEpisodeIdx.value = 0
       currentTime.value = 0
@@ -1101,6 +1157,7 @@ const loadTheatreData = async () => {
       : extraFiles.value.length
         ? 'extra'
         : 'episode'
+    activeListTab.value = activePlaybackMode.value
     activeExtraIdx.value = 0
     currentSourceIdx.value = 0
     currentTime.value =
@@ -1139,27 +1196,46 @@ const onLoadedData = () => {
 }
 
 const onTimeUpdate = () => {
-  const video = videoRef.value
-  if (!video || isSeeking.value) return
-
-  currentTime.value = video.currentTime
-  if (Number.isFinite(video.duration)) duration.value = video.duration
+  syncPlaybackPosition()
   saveProgressThrottled()
 }
 
 const onPlay = () => {
   isPlaying.value = true
+  startProgressAnimation()
   scheduleVideoFrameCheck()
 }
 
 const onPause = () => {
   clearVideoFrameCheck()
+  cancelProgressAnimation()
+  syncPlaybackPosition()
   isPlaying.value = false
-  void saveProgress()
+  if (!isAdvancingAfterEnded) void saveProgress()
+}
+
+const onEnded = () => {
+  clearVideoFrameCheck()
+  cancelProgressAnimation()
+  syncPlaybackPosition()
+  if (duration.value) currentTime.value = duration.value
+  isPlaying.value = false
+  isAdvancingAfterEnded = true
+
+  const target = getAdjacentPlaybackTarget(1)
+  void (async () => {
+    try {
+      if (target) await setPlaybackTarget(target, { autoplay: true })
+      else await saveProgress()
+    } finally {
+      isAdvancingAfterEnded = false
+    }
+  })()
 }
 
 const onVideoError = () => {
   clearVideoFrameCheck()
+  cancelProgressAnimation()
   shouldPlayOnReady = false
   isPlaying.value = false
   playbackError.value =
@@ -1183,6 +1259,7 @@ onUnmounted(() => {
   void saveProgress()
   void flushNoteAutosave()
   clearVideoFrameCheck()
+  cancelProgressAnimation()
   revokePlaybackUrl(videoUrl.value)
   clearSubtitle()
   clearNoteAttachmentPreviews()
@@ -1246,7 +1323,7 @@ watch(playbackRate, (value) => {
             @timeupdate="onTimeUpdate"
             @play="onPlay"
             @pause="onPause"
-            @ended="onPause"
+            @ended="onEnded"
             @error="onVideoError"
           >
             <track
@@ -1277,7 +1354,11 @@ watch(playbackRate, (value) => {
           <!-- Controls Bar -->
           <div class="video-controls">
             <div class="controls-top">
-              <div class="progress-container">
+              <div
+                class="progress-container"
+                :class="{ 'is-seeking': isSeeking }"
+                :style="progressTrackStyle"
+              >
                 <input
                   type="range"
                   min="0"
@@ -1290,9 +1371,10 @@ watch(playbackRate, (value) => {
                   @touchend="onProgressMouseUp"
                   class="progress-slider"
                 />
-                <div class="progress-bar-bg">
-                  <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+                <div class="progress-bar-bg" aria-hidden="true">
+                  <div class="progress-fill"></div>
                 </div>
+                <div class="progress-thumb" aria-hidden="true"></div>
               </div>
             </div>
 
@@ -1300,9 +1382,9 @@ watch(playbackRate, (value) => {
               <div class="controls-left">
                 <button
                   class="control-icon"
-                  @click="prevEpisode"
-                  :disabled="!canGoPrevEpisode"
-                  :class="{ disabled: !canGoPrevEpisode }"
+                  @click="prevPlaybackItem"
+                  :disabled="!canGoPrevPlaybackItem"
+                  :class="{ disabled: !canGoPrevPlaybackItem }"
                 >
                   <SkipBack :size="20" fill="currentColor" />
                 </button>
@@ -1312,9 +1394,9 @@ watch(playbackRate, (value) => {
                 </button>
                 <button
                   class="control-icon"
-                  @click="nextEpisode"
-                  :disabled="!canGoNextEpisode"
-                  :class="{ disabled: !canGoNextEpisode }"
+                  @click="nextPlaybackItem"
+                  :disabled="!canGoNextPlaybackItem"
+                  :class="{ disabled: !canGoNextPlaybackItem }"
                 >
                   <SkipForward :size="20" fill="currentColor" />
                 </button>
@@ -1522,34 +1604,58 @@ watch(playbackRate, (value) => {
             </section>
           </div>
 
-          <!-- Episodes List -->
-          <aside class="episodes-panel">
-            <h3 class="panel-title">选集</h3>
-            <div class="episodes-list">
+          <aside class="watch-list-panel">
+            <div class="watch-list-tabs" role="tablist" aria-label="播放列表">
               <button
-                v-for="ep in episodeRows"
-                :key="ep.id"
-                class="episode-item"
-                :class="{
-                  active: activePlaybackMode === 'episode' && activeEpisodeIdx === ep.originalIndex,
-                }"
-                @click="void setEpisode(ep.originalIndex)"
+                class="watch-list-tab"
+                :class="{ active: activeListTab === 'episode' }"
+                type="button"
+                role="tab"
+                :aria-selected="activeListTab === 'episode'"
+                @click="selectListTab('episode')"
               >
-                <span class="ep-main">
-                  <span class="ep-number">第 {{ ep.ep }} 集</span>
-                  <span class="ep-title">{{ ep.title }}</span>
-                </span>
-                <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
-                <PlayCircle
-                  v-if="activePlaybackMode === 'episode' && activeEpisodeIdx === ep.originalIndex"
-                  :size="16"
-                  class="active-dot-icon"
-                />
+                <span>选集</span>
+                <span class="tab-count">{{ episodeRows.length }}</span>
+              </button>
+              <button
+                class="watch-list-tab"
+                :class="{ active: activeListTab === 'extra' }"
+                type="button"
+                role="tab"
+                :aria-selected="activeListTab === 'extra'"
+                @click="selectListTab('extra')"
+              >
+                <span>附加视频</span>
+                <span class="tab-count">{{ extraRows.length }}</span>
               </button>
             </div>
-            <section v-if="extraRows.length" class="extras-section">
-              <h4 class="extras-title">附加视频</h4>
-              <div class="episodes-list extras-list">
+
+            <div class="watch-list-body">
+              <div v-if="activeListTab === 'episode' && episodeRows.length" class="episodes-list">
+                <button
+                  v-for="ep in episodeRows"
+                  :key="ep.id"
+                  class="episode-item"
+                  :class="{
+                    active:
+                      activePlaybackMode === 'episode' && activeEpisodeIdx === ep.originalIndex,
+                  }"
+                  @click="void setEpisode(ep.originalIndex)"
+                >
+                  <span class="ep-main">
+                    <span class="ep-number">第 {{ ep.ep }} 集</span>
+                    <span class="ep-title">{{ ep.title }}</span>
+                  </span>
+                  <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
+                  <PlayCircle
+                    v-if="activePlaybackMode === 'episode' && activeEpisodeIdx === ep.originalIndex"
+                    :size="16"
+                    class="active-dot-icon"
+                  />
+                </button>
+              </div>
+
+              <div v-else-if="activeListTab === 'extra' && extraRows.length" class="episodes-list">
                 <button
                   v-for="row in extraRows"
                   :key="row.file.id"
@@ -1570,7 +1676,9 @@ watch(playbackRate, (value) => {
                   />
                 </button>
               </div>
-            </section>
+
+              <div v-else class="watch-list-empty">{{ activeListEmptyText }}</div>
+            </div>
           </aside>
         </div>
       </section>
@@ -1743,9 +1851,33 @@ watch(playbackRate, (value) => {
 }
 
 .progress-fill {
+  width: var(--progress-percent);
   height: 100%;
   background-color: white;
   border-radius: inherit;
+}
+
+.progress-thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--progress-percent);
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  transition:
+    width 0.16s ease,
+    height 0.16s ease;
+  z-index: 25;
+}
+
+.progress-container:hover .progress-thumb,
+.progress-container.is-seeking .progress-thumb {
+  width: 16px;
+  height: 16px;
 }
 
 .progress-slider {
@@ -1762,40 +1894,34 @@ watch(playbackRate, (value) => {
   margin: 0;
 }
 
-/* Chrome/Safari Slider Thumb */
+.progress-slider::-webkit-slider-runnable-track {
+  height: 20px;
+  background: transparent;
+}
+
 .progress-slider::-webkit-slider-thumb {
   appearance: none;
-  width: 8px;
-  height: 8px;
-  background: white;
+  width: 20px;
+  height: 20px;
+  background: transparent;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   border: none;
-  transition: all 0.2s ease;
 }
 
-.progress-slider:hover::-webkit-slider-thumb {
-  width: 16px;
-  height: 16px;
-  transform: scale(1);
+.progress-slider::-moz-range-track {
+  height: 20px;
+  background: transparent;
+  border: 0;
 }
 
-/* Firefox Slider Thumb */
 .progress-slider::-moz-range-thumb {
-  width: 8px;
-  height: 8px;
-  background: white;
+  width: 20px;
+  height: 20px;
+  background: transparent;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   border: none;
-  transition: all 0.2s ease;
-}
-
-.progress-slider:hover::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
 }
 
 .controls-bottom {
@@ -2051,7 +2177,7 @@ watch(playbackRate, (value) => {
 .info-drawer {
   min-width: 0;
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   padding-right: 4px;
   scrollbar-width: none;
 }
@@ -2066,9 +2192,15 @@ watch(playbackRate, (value) => {
 }
 
 .info-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 18px;
+  height: 100%;
+  min-height: 0;
+}
+
+.metadata-area {
+  min-height: 0;
 }
 
 .media-header {
@@ -2317,45 +2449,82 @@ watch(playbackRate, (value) => {
   font-size: 12px;
 }
 
-/* Episodes Panel */
-.episodes-panel {
+.watch-list-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background-color: var(--surface);
-  border-radius: 18px;
-  padding: 20px;
+  border-radius: 8px;
+  padding: 12px;
   box-shadow: var(--shadow-ambient);
-  height: fit-content;
 }
 
-.panel-title {
-  font-size: 16px;
-  font-weight: 700;
-  margin-bottom: 16px;
+.watch-list-tabs {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border-radius: 8px;
+  background-color: var(--surface-low);
+}
+
+.watch-list-tab {
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 800;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.watch-list-tab.active {
+  color: var(--primary);
+  background-color: var(--surface);
+}
+
+.tab-count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.watch-list-body {
+  flex: 1;
+  min-height: 0;
+  padding-top: 12px;
+  overflow: hidden;
 }
 
 .episodes-list {
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 320px;
   overflow-y: auto;
   scrollbar-width: none;
 }
 
-.extras-section {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--outline-variant);
-}
-
-.extras-title {
-  margin: 0 0 10px;
+.watch-list-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--on-surface-variant);
   font-size: 13px;
-  font-weight: 800;
-}
-
-.extras-list {
-  max-height: 220px;
+  font-weight: 700;
 }
 
 .extra-item .ep-number {
