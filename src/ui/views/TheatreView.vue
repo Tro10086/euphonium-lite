@@ -1644,7 +1644,7 @@ watch(playbackRate, (value) => {
                 >
                   <span class="ep-main">
                     <span class="ep-number">第 {{ ep.ep }} 集</span>
-                    <span class="ep-title">{{ ep.title }}</span>
+                    <span class="ep-title" :title="ep.title">{{ ep.title }}</span>
                   </span>
                   <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
                   <PlayCircle
@@ -1666,8 +1666,8 @@ watch(playbackRate, (value) => {
                   @click="void setExtraFile(row.index)"
                 >
                   <span class="ep-main">
-                    <span class="ep-number">{{ row.label }}</span>
-                    <span class="ep-title">{{ row.file.name }}</span>
+                    <span class="ep-number" :title="row.label">{{ row.label }}</span>
+                    <span class="ep-title" :title="row.file.name">{{ row.file.name }}</span>
                   </span>
                   <PlayCircle
                     v-if="activePlaybackMode === 'extra' && activeExtraIdx === row.index"
@@ -2450,6 +2450,7 @@ watch(playbackRate, (value) => {
 }
 
 .watch-list-panel {
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -2502,6 +2503,7 @@ watch(playbackRate, (value) => {
 }
 
 .watch-list-body {
+  min-width: 0;
   flex: 1;
   min-height: 0;
   padding-top: 12px;
@@ -2509,6 +2511,7 @@ watch(playbackRate, (value) => {
 }
 
 .episodes-list {
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2528,6 +2531,7 @@ watch(playbackRate, (value) => {
 }
 
 .extra-item .ep-number {
+  flex: 0 1 auto;
   max-width: 96px;
   padding: 2px 8px;
   border-radius: 6px;
@@ -2537,6 +2541,7 @@ watch(playbackRate, (value) => {
 }
 
 .episode-item {
+  min-width: 0;
   width: 100%;
   display: flex;
   justify-content: space-between;
