@@ -1,7 +1,7 @@
 import { db } from '@/db/db'
 import { getAnime, getEpisodes } from './bangumi'
 import { animeAPI, episodeAPI, fileAPI, matchAPI } from './storage'
-import type { Episode } from '@/models/Anime'
+import type { Anime, Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 
 function uniqueTags(tags: string[] | undefined): string[] {
@@ -19,6 +19,10 @@ function extraLabelForFile(file: VideoFile) {
     lastPathSegment(file.parent_path) ||
     '附加视频'
   )
+}
+
+function isHiddenAnime(anime: Pick<Anime, 'deleted_at' | 'purge_requested_at'> | null | undefined) {
+  return Boolean(anime?.deleted_at || anime?.purge_requested_at)
 }
 
 export async function saveMatchResult(keyword: string) {
@@ -153,6 +157,15 @@ export async function saveMatchResult(keyword: string) {
     }
 
     if (!animeId) throw new Error('animeId is required')
+    const existingAnime = await db.anime.get(animeId)
+    if (isHiddenAnime(existingAnime)) {
+      await db.anime.update(animeId, {
+        deleted_at: null,
+        purge_requested_at: null,
+        updated_at: new Date(),
+      })
+    }
+
     epsToCreate.forEach((ep) => (ep.anime_id = animeId!))
 
     const currentEps = await db.episodes.where('anime_id').equals(animeId).toArray()

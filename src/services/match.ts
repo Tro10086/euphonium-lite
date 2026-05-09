@@ -1,9 +1,10 @@
 import { parseVideoFileName } from '@/utils/fileNameParser'
 import { getSearchResults } from './bangumi'
 import { isExtraDirectoryName } from './fileSystem'
-import { fileAPI, matchAPI } from './storage'
+import { animeAPI, fileAPI, matchAPI } from './storage'
 import type { BangumiAnime } from '@/models/Bangumi'
 import type { VideoFile } from '@/models/File'
+import type { MatchRecord } from '@/models/Match'
 
 const MANUAL_NO_MATCH_WARNING = '无法匹配，无法关联'
 
@@ -38,6 +39,34 @@ function parentPathForMatch(file: VideoFile, isExtra: boolean) {
   }
 
   return ''
+}
+
+function isHiddenAnime(
+  anime:
+    | {
+        deleted_at?: Date | string | number | null
+        purge_requested_at?: Date | string | number | null
+      }
+    | null
+    | undefined,
+) {
+  return Boolean(anime?.deleted_at || anime?.purge_requested_at)
+}
+
+async function shouldReopenCompletedMatch(existing: MatchRecord) {
+  if (existing.status !== 'completed') return false
+
+  if (existing.selected_local_anime_id) {
+    const anime = await animeAPI.getById(existing.selected_local_anime_id)
+    return !anime || isHiddenAnime(anime)
+  }
+
+  if (existing.selected_anime_id) {
+    const anime = await animeAPI.getByBangumiId(existing.selected_anime_id)
+    return !anime || isHiddenAnime(anime)
+  }
+
+  return true
 }
 
 export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
@@ -119,11 +148,14 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
 
       // 已完成或处理中，跳过
       if (existing) {
-        if (existing.status !== 'idle') return
+        const reopenCompletedMatch = await shouldReopenCompletedMatch(existing)
+        if (existing.status !== 'idle' && !reopenCompletedMatch) return
         await matchAPI.update(folderKey, {
+          status: 'idle',
           name: info.title,
           season: info.season,
           folder_name: info.folderName,
+          selected_anime_id: existing.selected_anime_id,
           search_keyword: `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`,
           draft_mappings: info.draft_mappings,
           unmapped_file_ids: info.unmapped_file_ids,
