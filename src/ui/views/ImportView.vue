@@ -647,7 +647,7 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div v-if="roots.length > 0" class="root-list">
+          <!-- <div v-if="roots.length > 0" class="root-list">
             <button
               v-for="root in roots"
               :key="root.id"
@@ -657,7 +657,7 @@ onMounted(async () => {
             >
               {{ root.name }}
             </button>
-          </div>
+          </div> -->
 
           <BaseButton full-width size="lg" :disabled="isBusy" @click="startScan">
             <template #icon><Radar :size="20" /></template>
