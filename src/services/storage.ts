@@ -285,7 +285,7 @@ export const matchAPI = {
 
   async update(
     key: string,
-    changes: Omit<Partial<MatchRecord>, 'keyword' | 'name' | 'season' | 'created_at'>,
+    changes: Omit<Partial<MatchRecord>, 'keyword' | 'created_at'>,
   ) {
     const existing = await this.getByFolderKey(key)
     return db.match.update(existing?.keyword ?? key, { ...changes, updated_at: new Date() })

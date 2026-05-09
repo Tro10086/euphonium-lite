@@ -53,6 +53,7 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
       folderName: string
       title: string
       season: number
+      hasEpisodeTitle: boolean
       draft_mappings: Record<number, string[]>
       unmapped_file_ids: string[]
       extra_file_ids: string[]
@@ -66,7 +67,8 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
     const isExtra = file.media_kind === 'extra'
     const parentPath = parentPathForMatch(file, isExtra)
     const folderName = lastPathSegment(parentPath) || parsed.title || file.extra_label || file.name
-    const title = isExtra ? folderName : parsed.title || folderName
+    const hasEpisodeTitle = !isExtra && Boolean(parsed.title)
+    const title = hasEpisodeTitle ? parsed.title : folderName
     const folderKey = `${rootId}:${parentPath || '/'}`
 
     if (!title) continue
@@ -81,12 +83,19 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
           folderName,
           title,
           season: parsed.season,
+          hasEpisodeTitle,
           draft_mappings: {},
           unmapped_file_ids: [],
           extra_file_ids: [],
           warnings: [],
         })
         .get(folderKey)!
+
+    if (hasEpisodeTitle && !entry.hasEpisodeTitle) {
+      entry.title = parsed.title
+      entry.season = parsed.season
+      entry.hasEpisodeTitle = true
+    }
 
     if (isExtra) {
       entry.extra_file_ids.push(file.id)
@@ -112,6 +121,9 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
       if (existing) {
         if (existing.status !== 'idle') return
         await matchAPI.update(folderKey, {
+          name: info.title,
+          season: info.season,
+          folder_name: info.folderName,
           search_keyword: `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`,
           draft_mappings: info.draft_mappings,
           unmapped_file_ids: info.unmapped_file_ids,
