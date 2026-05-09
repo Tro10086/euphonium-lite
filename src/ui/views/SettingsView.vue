@@ -373,16 +373,6 @@ const runTest = () => {
   margin: 0 auto;
 }
 
-@media (max-width: 900px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-nav {
-    display: none;
-  }
-}
-
 .settings-nav {
   position: sticky;
   top: 24px;
@@ -417,6 +407,7 @@ const runTest = () => {
   display: flex;
   flex-direction: column;
   gap: 64px;
+  min-width: 600px;
 }
 
 .section-title {
