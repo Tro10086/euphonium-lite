@@ -80,6 +80,7 @@ const reviewGroups = computed(() =>
         selectedId,
         mappingRows: Object.entries(match.draft_mappings ?? {}),
         unmappedFileIds: match.unmapped_file_ids ?? [],
+        extraFileIds: match.extra_file_ids ?? [],
       }
     }),
 )
@@ -141,6 +142,7 @@ async function refreshFileCache(records: MatchRecord[]) {
   const fileIds = records.flatMap((match) => [
     ...Object.values(match.draft_mappings ?? {}).flat(),
     ...(match.unmapped_file_ids ?? []),
+    ...(match.extra_file_ids ?? []),
   ])
   const uniqueFileIds = Array.from(new Set(fileIds))
   if (uniqueFileIds.length === 0) return
@@ -194,6 +196,50 @@ function fileName(fileId: string) {
 function fileSortKey(fileId: string) {
   const file = fileMap[fileId]
   return file?.path ?? file?.name ?? fileId
+}
+
+function pathLabel(path?: string) {
+  return path?.split('/').filter(Boolean).at(-1) ?? ''
+}
+
+function defaultExtraLabel(file: VideoFile) {
+  return (
+    file.extra_label ||
+    pathLabel(file.extra_group_path) ||
+    pathLabel(file.parent_path) ||
+    '附加视频'
+  )
+}
+
+function extraFileRows(item: { extraFileIds: string[] }) {
+  return item.extraFileIds
+    .map((fileId) => {
+      const file = fileMap[fileId]
+      return {
+        fileId,
+        fileName: file?.name ?? fileId,
+        label: file ? defaultExtraLabel(file) : '附加视频',
+      }
+    })
+    .sort((a, b) => fileSortKey(a.fileId).localeCompare(fileSortKey(b.fileId)))
+}
+
+async function updateExtraLabel(fileId: string, value: string) {
+  const file = fileMap[fileId]
+  if (!file) return
+
+  const normalized = value.trim() || defaultExtraLabel(file)
+  const updated: VideoFile = {
+    ...file,
+    media_kind: 'extra',
+    extra_label: normalized,
+  }
+  await fileAPI.update([updated])
+  fileMap[fileId] = updated
+}
+
+function handleExtraLabelChange(fileId: string, event: Event) {
+  void updateExtraLabel(fileId, (event.target as HTMLInputElement).value)
 }
 
 function episodeOptions(item: { episodePreview: BangumiEpisode[] }) {
@@ -643,6 +689,28 @@ onMounted(async () => {
                   @apply-offset="applyEpisodeOffset(item.key)"
                   @reset-mapping="resetEpisodeMapping(item.key)"
                 />
+
+                <section v-if="item.extraFileIds.length" class="extra-file-section">
+                  <div class="extra-file-header">
+                    <strong>附加视频</strong>
+                    <span>不计入观看进度</span>
+                  </div>
+                  <div class="extra-file-list">
+                    <div
+                      v-for="row in extraFileRows(item)"
+                      :key="row.fileId"
+                      class="extra-file-row"
+                    >
+                      <span class="extra-file-name">{{ row.fileName }}</span>
+                      <input
+                        class="extra-file-label-input"
+                        type="text"
+                        :value="row.label"
+                        @change="handleExtraLabelChange(row.fileId, $event)"
+                      />
+                    </div>
+                  </div>
+                </section>
 
                 <div v-if="isManualMatchOpen(item.key)" class="manual-match-panel">
                   <input
@@ -1230,6 +1298,71 @@ onMounted(async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--on-surface);
+  font-weight: 700;
+}
+
+.extra-file-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 14px;
+  background-color: var(--surface-low);
+}
+
+.extra-file-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.extra-file-header strong {
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.extra-file-header span {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.extra-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.extra-file-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 180px;
+  gap: 12px;
+  align-items: center;
+}
+
+.extra-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.extra-file-label-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  font-size: 13px;
   font-weight: 700;
 }
 

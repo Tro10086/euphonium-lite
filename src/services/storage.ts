@@ -229,6 +229,10 @@ export const fileAPI = {
     return db.files.where('root_id').equals(rootId).toArray()
   },
 
+  async getByAnimeId(animeId: string) {
+    return db.files.where('anime_id').equals(animeId).toArray()
+  },
+
   async add(files: VideoFile[]) {
     if (files.length) await db.files.bulkAdd(files)
   },

@@ -9,6 +9,20 @@ function withoutManualNoMatchWarning(warnings: string[] | undefined) {
   return (warnings ?? []).filter((warning) => warning !== MANUAL_NO_MATCH_WARNING)
 }
 
+function pathSegments(path: string) {
+  return path.split('/').filter(Boolean)
+}
+
+function parentDirectoryPath(path: string) {
+  const segments = pathSegments(path)
+  segments.pop()
+  return segments.join('/')
+}
+
+function lastPathSegment(path: string) {
+  return pathSegments(path).at(-1) ?? ''
+}
+
 export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
   const files = (await fileAPI.getAll()).filter((file) => file.scan_state !== 'missing')
 
@@ -24,6 +38,7 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
       season: number
       draft_mappings: Record<number, string[]>
       unmapped_file_ids: string[]
+      extra_file_ids: string[]
       warnings: string[]
     }
   >()
@@ -31,9 +46,12 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
   for (const file of files) {
     const parsed = parseVideoFileName(file.name)
     const rootId = file.root_id ?? 'main'
-    const parentPath = file.parent_path ?? ''
-    const folderName = parentPath.split('/').filter(Boolean).at(-1) ?? parsed.title
-    const title = parsed.title || folderName
+    const isExtra = file.media_kind === 'extra'
+    const parentPath = isExtra
+      ? parentDirectoryPath(file.extra_group_path ?? file.parent_path ?? '')
+      : (file.parent_path ?? '')
+    const folderName = lastPathSegment(parentPath) || parsed.title || file.extra_label || file.name
+    const title = isExtra ? folderName : parsed.title || folderName
     const folderKey = `${rootId}:${parentPath || '/'}`
 
     if (!title) continue
@@ -50,9 +68,15 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
           season: parsed.season,
           draft_mappings: {},
           unmapped_file_ids: [],
+          extra_file_ids: [],
           warnings: [],
         })
         .get(folderKey)!
+
+    if (isExtra) {
+      entry.extra_file_ids.push(file.id)
+      continue
+    }
 
     if (parsed.episode) {
       ;(entry.draft_mappings[parsed.episode] ??= []).push(file.id)
@@ -76,6 +100,7 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
           search_keyword: `${info.title}${info.season === 1 ? '' : `第${info.season}季`}`,
           draft_mappings: info.draft_mappings,
           unmapped_file_ids: info.unmapped_file_ids,
+          extra_file_ids: info.extra_file_ids,
           warnings: info.warnings,
         })
       } else {
@@ -90,6 +115,7 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
           season: info.season,
           draft_mappings: info.draft_mappings,
           unmapped_file_ids: info.unmapped_file_ids,
+          extra_file_ids: info.extra_file_ids,
           warnings: info.warnings,
         })
       }
@@ -120,7 +146,10 @@ export async function createMatch(): Promise<Map<string, BangumiAnime[]>> {
   return matchCandidate
 }
 
-export async function manualSearchMatch(matchKey: string, keyword: string): Promise<BangumiAnime[]> {
+export async function manualSearchMatch(
+  matchKey: string,
+  keyword: string,
+): Promise<BangumiAnime[]> {
   const searchKeyword = keyword.trim()
   if (!searchKeyword) throw new Error('请输入动画名称')
 

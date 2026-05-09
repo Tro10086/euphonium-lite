@@ -3,6 +3,9 @@ export interface VideoFile {
   root_id?: string
   ep_id?: string
   anime_id?: string
+  media_kind?: 'episode' | 'extra'
+  extra_label?: string
+  extra_group_path?: string
   name: string // 文件名
   path: string // 相对授权目录的路径
   parent_path?: string // 父目录相对路径

@@ -15,11 +15,11 @@
   --outline-variant: #d1c5b4;
   --error: #ba1a1a;
   --error-container: #ffdad6;
-  
+
   /* Fonts */
   --font-headline: 'Manrope', sans-serif;
   --font-body: 'Inter', sans-serif;
-  
+
   /* Shadows */
   --shadow-ambient: 0 12px 40px rgba(26, 28, 26, 0.05);
   --shadow-soft: 0 4px 14px rgba(119, 90, 25, 0.1);
@@ -58,7 +58,11 @@ body {
   min-height: 100vh;
 }
 
-h1, h2, h3, h4, .font-headline {
+h1,
+h2,
+h3,
+h4,
+.font-headline {
   font-family: var(--font-headline);
 }
 

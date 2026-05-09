@@ -35,6 +35,7 @@ const noteEditorRef = ref<HTMLTextAreaElement | null>(null)
 const realAnime = ref<Anime | null>(null)
 const realEpisodes = ref<Episode[]>([])
 const filesByEpisode = ref<Record<string, VideoFile[]>>({})
+const extraFiles = ref<VideoFile[]>([])
 const isLoading = ref(false)
 const playbackError = ref('')
 const videoUrl = ref('')
@@ -49,6 +50,17 @@ const noteAttachmentPreviews = ref<Array<{ id: string; name: string; url: string
 const hasRealData = computed(() => Boolean(realAnime.value))
 const uniqueTags = (tags: string[] | undefined) =>
   Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)))
+function pathLabel(path?: string) {
+  return path?.split('/').filter(Boolean).at(-1) ?? ''
+}
+function extraVideoLabel(file: VideoFile) {
+  return (
+    file.extra_label ||
+    pathLabel(file.extra_group_path) ||
+    pathLabel(file.parent_path) ||
+    '附加视频'
+  )
+}
 const media = computed(() => {
   if (!realAnime.value) {
     return {
@@ -100,6 +112,8 @@ const episodeRows = computed(() =>
     .filter((ep) => ep.fileCount > 0),
 )
 const activeEpisodeIdx = ref(0)
+const activePlaybackMode = ref<'episode' | 'extra'>('episode')
+const activeExtraIdx = ref(0)
 const rating = ref(0)
 const isFavorited = ref(false)
 
@@ -134,13 +148,27 @@ let noteAutosaveTimer: number | null = null
 let isHydratingNote = false
 
 const activeEpisode = computed(() => realEpisodes.value[activeEpisodeIdx.value] || null)
-const currentFiles = computed(() => {
+const activeExtraFile = computed(() => extraFiles.value[activeExtraIdx.value] || null)
+const episodeCurrentFiles = computed(() => {
   const ep = activeEpisode.value
   return ep ? filesByEpisode.value[ep.id] || [] : []
 })
+const currentFiles = computed(() =>
+  activePlaybackMode.value === 'extra'
+    ? activeExtraFile.value
+      ? [activeExtraFile.value]
+      : []
+    : episodeCurrentFiles.value,
+)
 const activeVideoFile = computed(() => currentFiles.value[currentSourceIdx.value] || null)
-const noteTargetId = computed(() => activeEpisode.value?.id ?? realAnime.value?.id ?? '')
-const noteTargetType = computed(() => (activeEpisode.value ? 'episode' : 'anime'))
+const noteTargetId = computed(() =>
+  activePlaybackMode.value === 'extra'
+    ? (activeExtraFile.value?.id ?? realAnime.value?.id ?? '')
+    : (activeEpisode.value?.id ?? realAnime.value?.id ?? ''),
+)
+const noteTargetType = computed(() =>
+  activePlaybackMode.value === 'extra' ? 'file' : activeEpisode.value ? 'episode' : 'anime',
+)
 const noteAttachmentPreviewById = computed(
   () => new Map(noteAttachmentPreviews.value.map((preview) => [preview.id, preview])),
 )
@@ -153,6 +181,13 @@ const sourceOptions = computed(() => {
     ? currentFiles.value.map((file) => file.name)
     : ['暂无可播放文件']
 })
+const extraRows = computed(() =>
+  extraFiles.value.map((file, index) => ({
+    file,
+    index,
+    label: extraVideoLabel(file),
+  })),
+)
 const progressPercent = computed(() => {
   if (!duration.value) return 0
   return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100))
@@ -166,10 +201,14 @@ const canPickSubtitle = computed(
 const activeEpisodeRowIndex = computed(() =>
   episodeRows.value.findIndex((ep) => ep.originalIndex === activeEpisodeIdx.value),
 )
-const canGoPrevEpisode = computed(() => activeEpisodeRowIndex.value > 0)
+const canGoPrevEpisode = computed(
+  () => activePlaybackMode.value === 'episode' && activeEpisodeRowIndex.value > 0,
+)
 const canGoNextEpisode = computed(
   () =>
-    activeEpisodeRowIndex.value >= 0 && activeEpisodeRowIndex.value < episodeRows.value.length - 1,
+    activePlaybackMode.value === 'episode' &&
+    activeEpisodeRowIndex.value >= 0 &&
+    activeEpisodeRowIndex.value < episodeRows.value.length - 1,
 )
 const isInfoPanelVisible = computed(() =>
   isCompactTheatre.value ? isInfoDrawerOpen.value : !isInfoPanelCollapsed.value,
@@ -664,6 +703,7 @@ const goToAllNotes = () => {
 }
 
 const saveProgress = async () => {
+  if (activePlaybackMode.value === 'extra') return
   if (!hasRealData.value || !realAnime.value || !activeEpisode.value) return
 
   const position = Math.max(0, Math.floor(currentTime.value))
@@ -885,11 +925,12 @@ const saveProgressThrottled = () => {
 
 const setEpisode = async (index: number, options: { autoplay?: boolean } = { autoplay: true }) => {
   if (!realEpisodes.value[index]) return
-  if (index === activeEpisodeIdx.value) return
+  if (activePlaybackMode.value === 'episode' && index === activeEpisodeIdx.value) return
 
   shouldPlayOnReady = options.autoplay ?? true
   await saveProgress()
   await flushNoteAutosave()
+  activePlaybackMode.value = 'episode'
   activeEpisodeIdx.value = index
   if (!hasRealData.value) {
     currentTime.value = 0
@@ -901,6 +942,26 @@ const setEpisode = async (index: number, options: { autoplay?: boolean } = { aut
   currentTime.value = realEpisodes.value[index]?.watch_progress || 0
   duration.value = realEpisodes.value[index]?.duration_seconds || 0
   currentSourceIdx.value = 0
+  isPlaying.value = false
+  playbackError.value = ''
+  await loadNote()
+}
+
+const setExtraFile = async (
+  index: number,
+  options: { autoplay?: boolean } = { autoplay: true },
+) => {
+  if (!extraFiles.value[index]) return
+  if (activePlaybackMode.value === 'extra' && index === activeExtraIdx.value) return
+
+  shouldPlayOnReady = options.autoplay ?? true
+  await saveProgress()
+  await flushNoteAutosave()
+  activePlaybackMode.value = 'extra'
+  activeExtraIdx.value = index
+  currentSourceIdx.value = 0
+  currentTime.value = 0
+  duration.value = 0
   isPlaying.value = false
   playbackError.value = ''
   await loadNote()
@@ -981,6 +1042,9 @@ const loadTheatreData = async () => {
       realAnime.value = null
       realEpisodes.value = []
       filesByEpisode.value = {}
+      extraFiles.value = []
+      activePlaybackMode.value = 'episode'
+      activeExtraIdx.value = 0
       activeEpisodeIdx.value = 0
       currentTime.value = 0
       duration.value = 0
@@ -993,7 +1057,10 @@ const loadTheatreData = async () => {
       (a, b) => (a.sort ?? a.ep) - (b.sort ?? b.ep),
     )
     const fileIds = [...new Set(episodes.flatMap((ep) => ep.file_ids || []))]
-    const files = fileIds.length ? await fileAPI.getByIds(fileIds) : []
+    const [files, animeFiles] = await Promise.all([
+      fileIds.length ? fileAPI.getByIds(fileIds) : Promise.resolve([]),
+      fileAPI.getByAnimeId(anime.id),
+    ])
     const filesById = new Map(files.map((file) => [file.id, file]))
 
     realAnime.value = anime
@@ -1003,14 +1070,23 @@ const loadTheatreData = async () => {
     filesByEpisode.value = Object.fromEntries(
       episodes.map((ep) => [
         ep.id,
-        (ep.file_ids || []).map((id) => filesById.get(id)).filter(Boolean) as VideoFile[],
+        (ep.file_ids || [])
+          .map((id) => filesById.get(id))
+          .filter((file): file is VideoFile => file !== undefined && file.media_kind !== 'extra'),
       ]),
     )
+    extraFiles.value = animeFiles
+      .filter((file) => file.media_kind === 'extra' && file.scan_state !== 'missing')
+      .sort(
+        (a, b) =>
+          (a.extra_label || '').localeCompare(b.extra_label || '') || a.path.localeCompare(b.path),
+      )
 
     const playableEpisodeIndexes = episodes
       .map((ep, index) => ({ index, fileCount: filesByEpisode.value[ep.id]?.length || 0 }))
       .filter((ep) => ep.fileCount > 0)
       .map((ep) => ep.index)
+    const hasPlayableEpisode = playableEpisodeIndexes.length > 0
     const queryEpisodeId = getRouteEpisodeId()
     const queryEpisodeIdx = queryEpisodeId
       ? episodes.findIndex((ep) => ep.id === queryEpisodeId)
@@ -1020,13 +1096,24 @@ const loadTheatreData = async () => {
     activeEpisodeIdx.value = playableEpisodeIndexes.includes(preferredIdx)
       ? preferredIdx
       : (playableEpisodeIndexes[0] ?? Math.max(0, preferredIdx))
+    activePlaybackMode.value = hasPlayableEpisode
+      ? 'episode'
+      : extraFiles.value.length
+        ? 'extra'
+        : 'episode'
+    activeExtraIdx.value = 0
     currentSourceIdx.value = 0
     currentTime.value =
-      getRouteStartSeconds() ??
-      episodes[activeEpisodeIdx.value]?.watch_progress ??
-      anime.last_watched_position ??
-      0
-    duration.value = episodes[activeEpisodeIdx.value]?.duration_seconds || 0
+      activePlaybackMode.value === 'episode'
+        ? (getRouteStartSeconds() ??
+          episodes[activeEpisodeIdx.value]?.watch_progress ??
+          anime.last_watched_position ??
+          0)
+        : 0
+    duration.value =
+      activePlaybackMode.value === 'episode'
+        ? episodes[activeEpisodeIdx.value]?.duration_seconds || 0
+        : 0
     await loadNote()
   } finally {
     isLoading.value = false
@@ -1443,7 +1530,9 @@ watch(playbackRate, (value) => {
                 v-for="ep in episodeRows"
                 :key="ep.id"
                 class="episode-item"
-                :class="{ active: activeEpisodeIdx === ep.originalIndex }"
+                :class="{
+                  active: activePlaybackMode === 'episode' && activeEpisodeIdx === ep.originalIndex,
+                }"
                 @click="void setEpisode(ep.originalIndex)"
               >
                 <span class="ep-main">
@@ -1452,12 +1541,36 @@ watch(playbackRate, (value) => {
                 </span>
                 <span v-if="ep.progress" class="ep-progress">{{ ep.progress }}%</span>
                 <PlayCircle
-                  v-if="activeEpisodeIdx === ep.originalIndex"
+                  v-if="activePlaybackMode === 'episode' && activeEpisodeIdx === ep.originalIndex"
                   :size="16"
                   class="active-dot-icon"
                 />
               </button>
             </div>
+            <section v-if="extraRows.length" class="extras-section">
+              <h4 class="extras-title">附加视频</h4>
+              <div class="episodes-list extras-list">
+                <button
+                  v-for="row in extraRows"
+                  :key="row.file.id"
+                  class="episode-item extra-item"
+                  :class="{
+                    active: activePlaybackMode === 'extra' && activeExtraIdx === row.index,
+                  }"
+                  @click="void setExtraFile(row.index)"
+                >
+                  <span class="ep-main">
+                    <span class="ep-number">{{ row.label }}</span>
+                    <span class="ep-title">{{ row.file.name }}</span>
+                  </span>
+                  <PlayCircle
+                    v-if="activePlaybackMode === 'extra' && activeExtraIdx === row.index"
+                    :size="16"
+                    class="active-dot-icon"
+                  />
+                </button>
+              </div>
+            </section>
           </aside>
         </div>
       </section>
@@ -2226,6 +2339,32 @@ watch(playbackRate, (value) => {
   max-height: 320px;
   overflow-y: auto;
   scrollbar-width: none;
+}
+
+.extras-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.extras-title {
+  margin: 0 0 10px;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.extras-list {
+  max-height: 220px;
+}
+
+.extra-item .ep-number {
+  max-width: 96px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background-color: var(--surface-low);
+  color: var(--primary);
+  font-size: 12px;
 }
 
 .episode-item {

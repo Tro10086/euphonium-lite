@@ -19,6 +19,7 @@ export interface MatchRecord {
   candidate_bangumi_ids?: number[]
   draft_mappings: Record<number, string[]>
   unmapped_file_ids?: string[]
+  extra_file_ids?: string[]
   offset?: number
   warnings?: string[]
   created_at?: Date

@@ -5,8 +5,19 @@ import type { Episode } from '@/models/Anime'
 import type { VideoFile } from '@/models/File'
 
 function uniqueTags(tags: string[] | undefined): string[] {
-  return Array.from(
-    new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
+  return Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)))
+}
+
+function lastPathSegment(path?: string) {
+  return path?.split('/').filter(Boolean).at(-1) ?? ''
+}
+
+function extraLabelForFile(file: VideoFile) {
+  return (
+    file.extra_label ||
+    lastPathSegment(file.extra_group_path) ||
+    lastPathSegment(file.parent_path) ||
+    '附加视频'
   )
 }
 
@@ -44,9 +55,7 @@ export async function saveMatchResult(keyword: string) {
   // 预加载所有相关数据
   const existingEps = animeId ? await episodeAPI.getByAnimeId(animeId) : []
   const epMapExistingByBangumi = new Map(
-    existingEps
-      .filter((ep) => ep.bangumi_episode_id)
-      .map((ep) => [ep.bangumi_episode_id!, ep]),
+    existingEps.filter((ep) => ep.bangumi_episode_id).map((ep) => [ep.bangumi_episode_id!, ep]),
   )
   const epMapExistingByNumber = new Map(existingEps.map((ep) => [ep.sort ?? ep.ep, ep]))
   const bangumiMainEps = bangumiEps.filter((ep) => ep.type === 0)
@@ -54,8 +63,10 @@ export async function saveMatchResult(keyword: string) {
   const epMapBangumiByEp = new Map(bangumiMainEps.map((ep) => [Number(ep.ep), ep]))
 
   // 收集所有 fileIds 批量查询
-  const allFileIds = Object.values(match.draft_mappings).flat()
-  const existingFiles = await fileAPI.getByIds(allFileIds)
+  const episodeFileIds = Object.values(match.draft_mappings).flat()
+  const extraFileIds = match.extra_file_ids ?? []
+  const allFileIds = Array.from(new Set([...episodeFileIds, ...extraFileIds]))
+  const existingFiles = allFileIds.length ? await fileAPI.getByIds(allFileIds) : []
   const fileMap = new Map(existingFiles.map((f) => [f.id, f]))
 
   // 计算需要的数据变更
@@ -146,9 +157,7 @@ export async function saveMatchResult(keyword: string) {
 
     const currentEps = await db.episodes.where('anime_id').equals(animeId).toArray()
     const currentEpByBangumi = new Map(
-      currentEps
-        .filter((ep) => ep.bangumi_episode_id)
-        .map((ep) => [ep.bangumi_episode_id!, ep]),
+      currentEps.filter((ep) => ep.bangumi_episode_id).map((ep) => [ep.bangumi_episode_id!, ep]),
     )
     const currentEpByNumber = new Map(currentEps.map((ep) => [ep.sort ?? ep.ep, ep]))
     const finalEpsToCreate = epsToCreate.filter((ep) => {
@@ -184,13 +193,36 @@ export async function saveMatchResult(keyword: string) {
 
       for (const fileId of fileIds) {
         const file = fileMap.get(fileId)
-        if (file && file.ep_id !== epId) {
-          filesToUpdate.push({ ...file, ep_id: epId, anime_id: animeId, scan_state: 'active' })
-        }
+        if (!file) continue
+
+        filesToUpdate.push({
+          ...file,
+          ep_id: epId,
+          anime_id: animeId,
+          media_kind: 'episode',
+          extra_label: undefined,
+          extra_group_path: undefined,
+          scan_state: 'active',
+        })
       }
     }
 
-    await fileAPI.update(filesToUpdate)
+    for (const fileId of extraFileIds) {
+      const file = fileMap.get(fileId)
+      if (!file) continue
+
+      filesToUpdate.push({
+        ...file,
+        ep_id: undefined,
+        anime_id: animeId,
+        media_kind: 'extra',
+        extra_label: extraLabelForFile(file),
+        extra_group_path: file.extra_group_path ?? file.parent_path,
+        scan_state: 'active',
+      })
+    }
+
+    await fileAPI.update(Array.from(new Map(filesToUpdate.map((file) => [file.id, file])).values()))
   })
 
   if (animeId) {
