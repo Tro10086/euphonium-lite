@@ -9,6 +9,8 @@ Euphonium Lite 是一个纯前端、本地优先的动画媒体库工具。它�
 
 Lite 版本专注验证单机使用闭环：授权目录、扫描本地文件、自动匹配、人工校正、馆藏浏览、放映厅播放、笔记、合集、回收站和 JSON 备份。
 
+项目地址：https://tro10086.github.io/euphonium-lite/
+
 ## 功能特性
 
 - 本地目录扫描：基于 File System Access API 读取用户授权目录，媒体文件不会上传到服务器。
