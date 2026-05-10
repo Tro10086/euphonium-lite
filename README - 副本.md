@@ -9,6 +9,22 @@ Euphonium Lite 是一个纯前端、本地优先的动画媒体库工具。它�
 
 Lite 版本专注验证单机使用闭环：授权目录、扫描本地文件、自动匹配、人工校正、馆藏浏览、放映厅播放、笔记、合集、回收站和 JSON 备份。
 
+## 截图素材建议
+
+README 可以插入截图，但建议不要直接把图片散放在 `docs/` 根目录。推荐统一放在 `docs/images/`，使用英文小写文件名，README 中用相对路径引用，例如 `![首页馆藏](docs/images/home-library.png)`。
+
+建议准备这些截图：
+
+| 图片       | 建议路径                          | 用途                                             |
+| ---------- | --------------------------------- | ------------------------------------------------ |
+| 首页馆藏   | `docs/images/home-library.png`    | 展示封面墙、筛选、收藏和观看进度。               |
+| 导入审核   | `docs/images/import-review.png`   | 展示 Bangumi 候选、剧集映射和附加视频标签。      |
+| 放映厅     | `docs/images/theatre-player.png`  | 展示播放器、选集、附加视频、字幕和笔记入口。     |
+| 笔记工作台 | `docs/images/notes-workbench.png` | 展示 Markdown 风格笔记、截图图片和全部笔记列表。 |
+| 设置与备份 | `docs/images/settings-backup.png` | 展示 JSON 导入导出和本地设置。                   |
+
+提交时把图片和文档一起提交即可；如果图片较大，优先压缩到单张 300KB-800KB 左右，避免 README 加载过慢。
+
 ## 功能特性
 
 - 本地目录扫描：基于 File System Access API 读取用户授权目录，媒体文件不会上传到服务器。
@@ -45,6 +61,15 @@ pnpm install
 pnpm run dev
 ```
 
+常用命令：
+
+```sh
+pnpm run type-check
+pnpm run build-only
+pnpm run build
+pnpm run lint
+```
+
 ## 使用流程
 
 1. 在「导入媒体」页选择本地动画目录。
@@ -69,6 +94,7 @@ JSON 备份不包含浏览器目录授权句柄，也不包含附件 Blob。恢�
 ## 项目结构
 
 ```text
+docs/                  需求、架构和历史方案文档
 public/                静态资源
 src/db/                Dexie 数据库定义与迁移
 src/models/            领域模型类型
@@ -77,6 +103,14 @@ src/services/          扫描、匹配、写库、播放、笔记、导入导出
 src/ui/                业务界面、组件、样式和 UI 状态
 src/utils/             文件名解析等工具
 ```
+
+## 文档
+
+- [详细需求与架构文档](docs/README-TECHNICAL.md)
+- [Complete 版设计方案](docs/COMPLETE-DESIGN.md)
+- [V3 技术方案](docs/euphonium-V3.md)
+- [V2 需求与技术文档](docs/euphonium-V2.md)
+- [原始方案整理](docs/euphonium.md)
 
 ## 当前限制
 
