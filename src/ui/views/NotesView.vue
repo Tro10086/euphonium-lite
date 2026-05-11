@@ -323,6 +323,14 @@ function plainTextFromTipTapJson(json: TipTapJSON): string {
   return lines.join('\n').trim()
 }
 
+function extractAttachmentIds(text: string): string[] {
+  const regex = /!\[[^\]]*\]\(attachment:([^)]+)\)/g
+  const ids = new Set<string>()
+  let match
+  while ((match = regex.exec(text))) ids.add(match[1])
+  return Array.from(ids)
+}
+
 function textToTipTapJson(text: string, attachmentIds: string[]): TipTapJSON {
   const imagePattern = /!\[([^\]]*)\]\(attachment:([^)]+)\)/g
   const attachmentIdSet = new Set(attachmentIds)
@@ -667,7 +675,7 @@ async function saveEditor() {
 
   setSaveStatus('saving')
   const noteId = existingCard?.note.id
-  const attachmentIds = existingCard?.note.attachmentIds ?? []
+  const attachmentIds = extractAttachmentIds(editorText.value)
 
   const savedId = await notesAPI.save({
     id: noteId,

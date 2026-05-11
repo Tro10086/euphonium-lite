@@ -164,16 +164,7 @@ export const attachmentAPI = {
       created_at: new Date(),
     }
 
-    await notesDb.transaction('rw', [notesDb.attachments, notesDb.notes], async () => {
-      await notesDb.attachments.put(attachment)
-      const note = await notesDb.notes.get(draft.noteId)
-      if (note && !note.attachmentIds.includes(id)) {
-        await notesDb.notes.update(note.id, {
-          attachmentIds: [...note.attachmentIds, id],
-          updated_at: new Date(),
-        })
-      }
-    })
+    await notesDb.attachments.put(attachment)
 
     return id
   },
