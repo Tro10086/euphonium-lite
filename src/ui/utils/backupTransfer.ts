@@ -1,5 +1,32 @@
-import { createExportJson, importExportData } from '@/services/exportData'
+import { createExportJson, importExportData, createExportZip, importNoteZip } from '@/services/exportData'
 import type { ImportMergeResult } from '@/models/Note'
+
+export function formatImporZiptResult(result: { imported: number; skipped: number; errors: string[] }) {
+  const imported = result.imported
+  const skipped = result.skipped
+  return `导入完成：${imported}条笔记${skipped ? `，跳过 ${skipped}条；` : ''}`
+}
+
+export async function importBackupZipFile(file: File) {
+  const result = await importNoteZip(file)
+  if (result.errors.length > 0) {
+    throw new Error(result.errors.join('\n') || '导入失败')
+  }
+  return result
+}
+
+export async function downloadNoteZip() {
+  const blob = await createExportZip()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const date = new Date().toISOString().slice(0, 10)
+  a.href = url
+  a.download = `notes-export-${date}.zip`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
 
 export function formatImportResult(result: ImportMergeResult) {
   const merged = result.merged
@@ -12,7 +39,7 @@ export function formatImportResult(result: ImportMergeResult) {
     `笔记 ${merged.notes ?? 0}`,
   ]
   const skippedCount = Object.values(skipped).reduce((sum, value) => sum + (value ?? 0), 0)
-  return `导入完成：${parts.join('，')}${skippedCount ? `；跳过 ${skippedCount}` : ''}`
+  return `导入完成：${parts.join('，')}${skippedCount ? `；跳过 ${skippedCount}；` : ''}`
 }
 
 export async function importBackupJsonFile(file: File) {

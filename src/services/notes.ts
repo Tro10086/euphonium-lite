@@ -119,6 +119,11 @@ export const notesAPI = {
     return notesDb.notes.toArray()
   },
 
+  async getAllActive() {
+    const notes = await notesDb.notes.toArray()
+    return notes.filter((note) => !note.deleted_at)
+  },
+
   async bulkPut(notes: Note[]) {
     if (notes.length === 0) return
     await notesDb.notes.bulkPut(notes)

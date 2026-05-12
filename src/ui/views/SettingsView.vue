@@ -5,7 +5,7 @@ import { Palette, Code, Database, Lightbulb, Moon, Settings2, Check, Download, U
 import BaseButton from '@/ui/components/BaseButton.vue';
 import ConfirmDialog from '@/ui/components/ConfirmDialog.vue';
 import { debugAPI } from '@/services/storage';
-import { downloadBackupJson, formatImportResult, importBackupJsonFile, reloadAfterImport } from '@/ui/utils/backupTransfer';
+import { downloadBackupJson, formatImportResult, importBackupJsonFile, reloadAfterImport, formatImporZiptResult, importBackupZipFile, downloadNoteZip } from '@/ui/utils/backupTransfer';
 import { parseDetailedVideoFileName } from '@/utils/fileNameParser';
 
 type FileNameParseTestResult = {
@@ -52,8 +52,13 @@ const onFileChange = async (event: Event) => {
     dataMessage.value = '';
     dataError.value = '';
     try {
-      const result = await importBackupJsonFile(file);
-      dataMessage.value = `${formatImportResult(result)}，即将刷新应用`;
+      if (file.name.endsWith('.zip')) {
+        const result = await importBackupZipFile(file)
+        dataMessage.value = `${formatImporZiptResult(result)}，即将刷新应用`;
+      } else {
+        const result = await importBackupJsonFile(file);
+        dataMessage.value = `${formatImportResult(result)}，即将刷新应用`;
+      }
       reloadAfterImport();
     } catch (error) {
       dataError.value = error instanceof Error ? error.message : String(error);
@@ -69,6 +74,17 @@ const handleExportBackup = async () => {
   try {
     await downloadBackupJson();
     dataMessage.value = '已导出真实馆藏 JSON 备份';
+  } catch (error) {
+    dataError.value = error instanceof Error ? error.message : String(error);
+  }
+};
+
+const handleExportZip = async () => {
+  dataMessage.value = '';
+  dataError.value = '';
+  try {
+    await downloadNoteZip();
+    dataMessage.value = '已导出笔记zip';
   } catch (error) {
     dataError.value = error instanceof Error ? error.message : String(error);
   }
@@ -132,7 +148,7 @@ const runTest = () => {
       type="file" 
       ref="fileInputRef" 
       style="display: none" 
-      accept=".json"
+      accept=".json,.zip"
       @change="onFileChange"
     />
 
@@ -311,6 +327,32 @@ const runTest = () => {
               <div class="row-info">
                 <h3>导入数据</h3>
                 <p>从之前的备份文件中恢复馆藏数据；同 ID 数据会被备份内容覆盖。</p>
+              </div>
+              <BaseButton variant="secondary" @click="handleImportFile">
+                <template #icon><Upload :size="16" /></template>
+                <span>选择文件</span>
+              </BaseButton>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="action-row">
+              <div class="row-info">
+                <h3>导出笔记</h3>
+                <p>将笔记导出为md格式，连同图片一起打包为zip；回收站内笔记不会导出。</p>
+              </div>
+              <BaseButton @click="handleExportZip">
+                <template #icon><Download :size="16" /></template>
+                <span>导出备份</span>
+              </BaseButton>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="action-row">
+              <div class="row-info">
+                <h3>导入笔记</h3>
+                <p>可将之前备份的 ZIP 文件恢复为笔记；多次导入同一备份会产生重复笔记。</p>
               </div>
               <BaseButton variant="secondary" @click="handleImportFile">
                 <template #icon><Upload :size="16" /></template>
