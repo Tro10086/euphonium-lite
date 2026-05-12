@@ -31,6 +31,7 @@ import {
 import type { Anime, Episode } from '@/models/Anime'
 import type { Attachment, Note, NoteTargetType, TipTapJSON } from '@/models/Note'
 import { attachmentAPI, notesAPI } from '@/services/notes'
+import { cleanupOrphanAttachments, scanOrphanAttachments } from '@/services/attachmentCleanup'
 import { animeAPI, episodeAPI } from '@/services/storage'
 import { uiState } from '@/ui/stores/uiState'
 import BaseModal from '@/ui/components/BaseModal.vue'
@@ -96,6 +97,10 @@ const deleteDialogTitle = ref('删除笔记')
 const deleteDialogMessage = ref('')
 const pendingDeleteAction = ref<(() => Promise<void>) | null>(null)
 let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
+const cleanupScanResult = ref<{ result: CleanupResult; orphanIds: string[] } | null>(null)
+const cleanupResult = ref<{ scannedNotes: number; scannedAttachments: number; orphanBlobs: number; freedBytes: number } | null>(null)
+const cleanupLoading = ref(false)
+const cleanupDialogOpen = ref(false)
 
 const sortOptions: Array<{ value: SortMode; label: string; shortLabel: string }> = [
   { value: 'updated', label: '按时间', shortLabel: '时间' },
@@ -897,6 +902,34 @@ async function deleteSelectedPermanently() {
     },
   })
 }
+async function handleScanOrphan() {
+  cleanupLoading.value = true
+  try {
+    cleanupScanResult.value = await scanOrphanAttachments()
+    cleanupResult.value = cleanupScanResult.value.result
+    cleanupDialogOpen.value = true
+  } finally {
+    cleanupLoading.value = false
+  }
+}
+
+async function handleCleanupOrphan() {
+  if (!cleanupScanResult.value) return
+  cleanupLoading.value = true
+  try {
+    cleanupResult.value = await cleanupOrphanAttachments(cleanupScanResult.value.orphanIds)
+    await refreshData()
+  } finally {
+    cleanupLoading.value = false
+    cleanupDialogOpen.value = false
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 function openDeleteDialog(options: {
   title: string
@@ -1068,6 +1101,14 @@ onUnmounted(() => {
             >
               <Trash2 :size="16" />
               <span>删除</span>
+            </button>
+            <button
+              class="tool-btn"
+              :disabled="selectionMode || cleanupLoading"
+              @click="handleScanOrphan"
+            >
+              <Trash2 :size="16" />
+              <span>清理附件</span>
             </button>
 
             <button
@@ -1319,6 +1360,23 @@ onUnmounted(() => {
       <template #footer>
         <button class="dialog-cancel" @click="cancelDeleteDialog">取消</button>
         <button class="dialog-confirm danger" @click="confirmDeleteDialog">删除</button>
+      </template>
+    </BaseModal>
+
+    <BaseModal
+      v-model="cleanupDialogOpen"
+      title="清理未引用附件"
+      width="420px"
+      :close-on-overlay="false"
+      @close="cleanupDialogOpen = false"
+    >
+      <p v-if="cleanupResult">
+        扫描到 <strong>{{ cleanupResult.orphanBlobs }}</strong> 个未被引用的附件，
+        可释放 <strong>{{ formatBytes(cleanupResult.freedBytes) }}</strong> 空间。
+      </p>
+      <template #footer>
+        <button class="dialog-cancel" @click="cleanupDialogOpen = false">取消</button>
+        <button class="dialog-confirm danger" @click="handleCleanupOrphan">清理</button>
       </template>
     </BaseModal>
   </div>
