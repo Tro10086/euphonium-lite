@@ -819,18 +819,25 @@ async function insertImageBlob(blob: Blob, name: string) {
     return
   }
 
-  const id = await attachmentAPI.put({
-    noteId: activeNoteId.value!,
-    name,
-    blob,
-  })
+  try {
+    const id = await attachmentAPI.put({
+      noteId: activeNoteId.value,
+      name,
+      blob,
+    })
 
-  insertMarkdown('![图片](attachment:', ')', id)
+    insertMarkdown('![图片](attachment:', ')', id)
 
-  // 立刻更新预览缓存
-  const attachments = await attachmentAPI.getByIds([id])
-  if (attachments.length) {
-    attachmentPreviewById.value[id] = createAttachmentPreview(attachments[0])
+    const attachments = await attachmentAPI.getByIds([id])
+    if (attachments.length) {
+      attachmentPreviewById.value[id] = createAttachmentPreview(attachments[0])
+    }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      editorMessage.value = '存储空间不足，请清理未引用的附件后重试'
+    } else {
+      throw e
+    }
   }
 }
 
