@@ -801,6 +801,51 @@ function insertTimestamp() {
   insertMarkdown('[00:00]')
 }
 
+async function insertImageBlob(blob: Blob, name: string) {
+  if (!activeNoteId.value) {
+    editorMessage.value = '请先保存笔记再粘贴图片'
+    return
+  }
+
+  const id = await attachmentAPI.put({
+    noteId: activeNoteId.value!,
+    name,
+    blob,
+  })
+
+  insertMarkdown('![图片](attachment:', ')', id)
+
+  // 立刻更新预览缓存
+  const attachments = await attachmentAPI.getByIds([id])
+  if (attachments.length) {
+    attachmentPreviewById.value[id] = createAttachmentPreview(attachments[0])
+  }
+}
+
+async function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  for (const item of items) {
+    if (!item.type.startsWith('image/')) continue
+    e.preventDefault()
+    const blob = item.getAsFile()
+    if (!blob) continue
+    await insertImageBlob(blob, `pasted-${Date.now()}.${blob.type.split('/')[1] || 'png'}`)
+  }
+}
+
+async function handleDrop(e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (!files) return
+  e.preventDefault()
+
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue
+    await insertImageBlob(file, file.name || `dropped-${Date.now()}.png`)
+  }
+}
+
 async function softDeleteSelected() {
   const ids = Array.from(selectedNoteIds.value)
   if (ids.length === 0) return
@@ -1186,6 +1231,9 @@ onUnmounted(() => {
                 v-model="editorText"
                 class="note-editor"
                 placeholder="记录这部动画或某一集的想法..."
+                @paste="handlePaste"
+                @drop="handleDrop"
+                @dragover.prevent
               ></textarea>
               <article
                 v-show="editorMode !== 'edit'"
