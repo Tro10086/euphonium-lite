@@ -7,7 +7,24 @@ export interface CleanupResult {
   freedBytes: number
 }
 
-export async function scanOrphanAttachments(): Promise<{ result: CleanupResult; orphanIds: string[] }> {
+export interface StorageEstimate {
+  usage: number
+  quota: number
+}
+
+export async function getStorageEstimate(): Promise<StorageEstimate | null> {
+  if (!navigator.storage || !navigator.storage.estimate) return null
+  const estimate = await navigator.storage.estimate()
+  return {
+    usage: estimate.usage ?? 0,
+    quota: estimate.quota ?? 0,
+  }
+}
+
+export async function scanOrphanAttachments(): Promise<{
+  result: CleanupResult
+  orphanIds: string[]
+}> {
   const allNotes = await notesDb.notes.toArray()
   const allAttachments = await notesDb.attachments.toArray()
 
@@ -31,15 +48,8 @@ export async function scanOrphanAttachments(): Promise<{ result: CleanupResult; 
   }
 }
 
-export async function cleanupOrphanAttachments(orphanIds: string[]): Promise<CleanupResult> {
+export async function cleanupOrphanAttachments(orphanIds: string[]): Promise<void> {
   if (orphanIds.length > 0) {
     await notesDb.attachments.bulkDelete(orphanIds)
-  }
-
-  return {
-    scannedNotes: 0,
-    scannedAttachments: 0,
-    orphanBlobs: orphanIds.length,
-    freedBytes: 0,
   }
 }

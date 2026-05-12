@@ -31,7 +31,13 @@ import {
 import type { Anime, Episode } from '@/models/Anime'
 import type { Attachment, Note, NoteTargetType, TipTapJSON } from '@/models/Note'
 import { attachmentAPI, notesAPI } from '@/services/notes'
-import { cleanupOrphanAttachments, scanOrphanAttachments } from '@/services/attachmentCleanup'
+import {
+  cleanupOrphanAttachments,
+  scanOrphanAttachments,
+  getStorageEstimate,
+  type CleanupResult,
+  type StorageEstimate,
+} from '@/services/attachmentCleanup'
 import { animeAPI, episodeAPI } from '@/services/storage'
 import { uiState } from '@/ui/stores/uiState'
 import BaseModal from '@/ui/components/BaseModal.vue'
@@ -98,7 +104,8 @@ const deleteDialogMessage = ref('')
 const pendingDeleteAction = ref<(() => Promise<void>) | null>(null)
 let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
 const cleanupScanResult = ref<{ result: CleanupResult; orphanIds: string[] } | null>(null)
-const cleanupResult = ref<{ scannedNotes: number; scannedAttachments: number; orphanBlobs: number; freedBytes: number } | null>(null)
+const cleanupResult = ref<CleanupResult | null>(null)
+const storageEstimate = ref<StorageEstimate | null>(null)
 const cleanupLoading = ref(false)
 const cleanupDialogOpen = ref(false)
 
@@ -905,8 +912,12 @@ async function deleteSelectedPermanently() {
 async function handleScanOrphan() {
   cleanupLoading.value = true
   try {
-    cleanupScanResult.value = await scanOrphanAttachments()
-    cleanupResult.value = cleanupScanResult.value.result
+    const [scanResult, estimate] = await Promise.all([
+      scanOrphanAttachments(),
+      getStorageEstimate(),
+    ])
+    cleanupScanResult.value = scanResult
+    storageEstimate.value = estimate
     cleanupDialogOpen.value = true
   } finally {
     cleanupLoading.value = false
@@ -917,11 +928,13 @@ async function handleCleanupOrphan() {
   if (!cleanupScanResult.value) return
   cleanupLoading.value = true
   try {
-    cleanupResult.value = await cleanupOrphanAttachments(cleanupScanResult.value.orphanIds)
-    await refreshData()
+    await cleanupOrphanAttachments(cleanupScanResult.value.orphanIds)
+    cleanupResult.value = cleanupScanResult.value.result
+    cleanupScanResult.value = null
   } finally {
     cleanupLoading.value = false
     cleanupDialogOpen.value = false
+    await refreshData()
   }
 }
 
@@ -1370,13 +1383,24 @@ onUnmounted(() => {
       :close-on-overlay="false"
       @close="cleanupDialogOpen = false"
     >
-      <p v-if="cleanupResult">
-        扫描到 <strong>{{ cleanupResult.orphanBlobs }}</strong> 个未被引用的附件，
-        可释放 <strong>{{ formatBytes(cleanupResult.freedBytes) }}</strong> 空间。
-      </p>
+      <div v-if="cleanupScanResult?.result">
+        <p>
+          扫描到 <strong>{{ cleanupScanResult.result.orphanBlobs }}</strong> 个未被引用的附件，
+          可释放 <strong>{{ formatBytes(cleanupScanResult.result.freedBytes) }}</strong> 空间。
+        </p>
+        <p v-if="storageEstimate" class="storage-info">
+          已用 {{ formatBytes(storageEstimate.usage) }} / {{ formatBytes(storageEstimate.quota) }}
+        </p>
+      </div>
       <template #footer>
         <button class="dialog-cancel" @click="cleanupDialogOpen = false">取消</button>
-        <button class="dialog-confirm danger" @click="handleCleanupOrphan">清理</button>
+        <button
+          class="dialog-confirm danger"
+          :disabled="!cleanupScanResult?.result.orphanBlobs"
+          @click="handleCleanupOrphan"
+        >
+          清理
+        </button>
       </template>
     </BaseModal>
   </div>
@@ -2187,6 +2211,12 @@ onUnmounted(() => {
   color: var(--on-surface-variant);
   font-size: 14px;
   line-height: 1.6;
+}
+
+.storage-info {
+  margin-top: 8px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
 }
 
 .dialog-cancel,
